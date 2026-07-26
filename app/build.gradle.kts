@@ -25,8 +25,12 @@ android {
 
     signingConfigs {
         getByName("debug") {
-            v1SigningEnabled = true
-            v2SigningEnabled = true
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            isV1SigningEnabled = true
+            isV2SigningEnabled = true
         }
     }
 
