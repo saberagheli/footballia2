@@ -114,8 +114,13 @@ class FootballPredictorViewModel(application: Application) : AndroidViewModel(ap
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // Predictions of the logged-in user
-    private val _userPredictions = MutableStateFlow<List<UserPredictionWithMatch>>(emptyList())
-    val userPredictions: StateFlow<List<UserPredictionWithMatch>> = _userPredictions.asStateFlow()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val userPredictions: StateFlow<List<UserPredictionWithMatch>> = currentUser
+        .flatMapLatest { user ->
+            if (user == null) flowOf(emptyList())
+            else repository.getPredictionsForUser(user.id)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // For signup and login screens
     private val _authError = MutableStateFlow<String?>(null)
@@ -142,20 +147,12 @@ class FootballPredictorViewModel(application: Application) : AndroidViewModel(ap
             repository.getAppSettingsDirect()
         }
 
-        // Observe current user changes and reload predictions
+        // Sync matches from remote server (https://footballfun.ir)
         viewModelScope.launch {
-            currentUser.collect { user ->
-                if (user != null) {
-                    repository.getPredictionsForUser(user.id).collect { preds ->
-                        _userPredictions.value = preds
-                    }
-                } else {
-                    _userPredictions.value = emptyList()
-                    if (_currentUserId.value != null) {
-                        _currentUserId.value = null
-                        prefs.edit().remove("saved_user_id").apply()
-                    }
-                }
+            try {
+                repository.syncMatchesFromRemote()
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
         
@@ -163,7 +160,7 @@ class FootballPredictorViewModel(application: Application) : AndroidViewModel(ap
         viewModelScope.launch {
             leaderboard.first { true } // Wait for first load
             if (leaderboard.value.isEmpty()) {
-                seedMockData()
+                repository.seedDemoData()
             } else {
                 // Ensure SCHOLES user exists and has uppercase username
                 val scholes = repository.getUserByUsername("SCHOLES")
@@ -178,7 +175,7 @@ class FootballPredictorViewModel(application: Application) : AndroidViewModel(ap
             val savedUserId = prefs.getInt("saved_user_id", -1)
             if (savedUserId != -1) {
                 val user = repository.getUserById(savedUserId)
-                if (user != null) {
+                if (user != null && user.isActive) {
                     if (user.username.equals("scholes", ignoreCase = true) && user.username != "SCHOLES") {
                         val updated = user.copy(username = "SCHOLES", displayName = "SCHOLES")
                         repository.updateUser(updated)
@@ -187,18 +184,11 @@ class FootballPredictorViewModel(application: Application) : AndroidViewModel(ap
                         _currentUserId.value = user.id
                     }
                 } else {
-                    val scholesUser = repository.getUserByUsername("SCHOLES") ?: repository.getUserByUsername("ali")
-                    scholesUser?.let {
-                        _currentUserId.value = it.id
-                        prefs.edit().putInt("saved_user_id", it.id).apply()
-                    }
+                    _currentUserId.value = null
+                    prefs.edit().remove("saved_user_id").apply()
                 }
             } else {
-                val scholesUser = repository.getUserByUsername("SCHOLES") ?: repository.getUserByUsername("ali")
-                scholesUser?.let {
-                    _currentUserId.value = it.id
-                    prefs.edit().putInt("saved_user_id", it.id).apply()
-                }
+                _currentUserId.value = null
             }
         }
     }
@@ -382,6 +372,32 @@ class FootballPredictorViewModel(application: Application) : AndroidViewModel(ap
         viewModelScope.launch {
             repository.submitStagePredictions(user.id, stageName)
             _currentUserId.value = user.id
+            // Send predictions to remote server https://footballfun.ir
+            try {
+                val stageMatches = repository.getMatchesByStage(stageName).first()
+                val userPreds = repository.getPredictionsForUser(user.id).first()
+                val items = stageMatches.map { match ->
+                    val p = userPreds.firstOrNull { it.prediction.matchId == match.id }
+                    com.example.network.PredictionSubmissionItem(
+                        matchId = match.id,
+                        homeScore = p?.prediction?.predictedHomeScore ?: 0,
+                        awayScore = p?.prediction?.predictedAwayScore ?: 0
+                    )
+                }
+                repository.submitPredictionsToRemote(user.id, items)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun syncWithRemoteServer() {
+        viewModelScope.launch {
+            try {
+                repository.syncMatchesFromRemote()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -644,11 +660,8 @@ class FootballPredictorViewModel(application: Application) : AndroidViewModel(ap
     fun seedMockData() {
         viewModelScope.launch {
             repository.seedDemoData()
-            // Set current user to 'admin' or 'ali'
-            val admin = repository.getUserByUsername("admin")
-            if (admin != null) {
-                _currentUserId.value = admin.id
-            }
+            _currentUserId.value = null
+            prefs.edit().remove("saved_user_id").apply()
         }
     }
 }
