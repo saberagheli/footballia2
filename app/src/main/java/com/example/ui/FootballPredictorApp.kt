@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.SportsSoccer
@@ -32,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -69,18 +71,31 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
     val allEliminatedItems by viewModel.allEliminatedItems.collectAsStateWithLifecycle()
 
     var activeTab by remember { mutableStateOf(0) }
-    var showAuthDialog by remember { mutableStateOf(false) }
     var showPredictionDialogForMatch by remember { mutableStateOf<MatchEntity?>(null) }
     var showAdminScoreDialogForMatch by remember { mutableStateOf<MatchEntity?>(null) }
+    var showConfirmLogoutDialog by remember { mutableStateOf(false) }
 
     // Last dismissed announcement state
     var dismissedAnnouncementId by remember { mutableStateOf<Int?>(null) }
+
+    var isScholesCardDismissed by remember { mutableStateOf(false) }
 
     // Automatically navigate to Tab 0 if logged out or admin tab is active and user is not admin
     LaunchedEffect(currentUser) {
         if (activeTab == 3 && currentUser?.isAdmin != true) {
             activeTab = 0
         }
+    }
+
+    // MANDATORY LOGIN SCREEN IF NOT AUTHENTICATED
+    if (currentUser == null) {
+        LoginScreen(
+            authError = authError,
+            onLogin = { username, password ->
+                viewModel.login(username, password)
+            }
+        )
+        return
     }
 
     Scaffold(
@@ -104,17 +119,6 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                         )
                     }
                 },
-                actions = {
-                    IconButton(
-                        onClick = { viewModel.seedMockData() },
-                        colors = IconButtonDefaults.iconButtonColors(contentColor = SportGold)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "ریست دیتابیس / Seed Data"
-                        )
-                    }
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = StadiumDark,
                     titleContentColor = StadiumWhite
@@ -130,7 +134,7 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                     selected = activeTab == 0,
                     onClick = { activeTab = 0 },
                     icon = { Icon(Icons.Default.Leaderboard, contentDescription = null) },
-                    label = { Text("جدول رده‌بندی", fontWeight = FontWeight.Bold) },
+                    label = { Text("رده‌بندی", fontWeight = FontWeight.Bold, fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = StadiumDark,
                         selectedTextColor = SportGold,
@@ -143,7 +147,7 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                     selected = activeTab == 1,
                     onClick = { activeTab = 1 },
                     icon = { Icon(Icons.Default.SportsSoccer, contentDescription = null) },
-                    label = { Text("پیش‌بینی بازی‌ها", fontWeight = FontWeight.Bold) },
+                    label = { Text("پیش‌بینی", fontWeight = FontWeight.Bold, fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = StadiumDark,
                         selectedTextColor = SportGold,
@@ -156,7 +160,7 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                     selected = activeTab == 2,
                     onClick = { activeTab = 2 },
                     icon = { Icon(Icons.Default.Group, contentDescription = null) },
-                    label = { Text("نتایج همگانی", fontWeight = FontWeight.Bold) },
+                    label = { Text("نتایج همگانی", fontWeight = FontWeight.Bold, fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = StadiumDark,
                         selectedTextColor = SportGold,
@@ -171,7 +175,7 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                         selected = activeTab == 3,
                         onClick = { activeTab = 3 },
                         icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                        label = { Text("پنل مدیریت", fontWeight = FontWeight.Bold) },
+                        label = { Text("مدیریت", fontWeight = FontWeight.Bold, fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = StadiumDark,
                             selectedTextColor = SportGold,
@@ -181,6 +185,20 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                         )
                     )
                 }
+                // Dedicated Logout Tab next to Public Predictions
+                NavigationBarItem(
+                    selected = false,
+                    onClick = { showConfirmLogoutDialog = true },
+                    icon = { Icon(Icons.Default.ExitToApp, contentDescription = "خروج", tint = Color.Red.copy(alpha = 0.85f)) },
+                    label = { Text("خروج", fontWeight = FontWeight.Bold, color = Color.Red.copy(alpha = 0.85f), fontSize = 11.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color.Red,
+                        selectedTextColor = Color.Red,
+                        indicatorColor = Color.Red.copy(alpha = 0.2f),
+                        unselectedIconColor = Color.Red.copy(alpha = 0.85f),
+                        unselectedTextColor = Color.Red.copy(alpha = 0.85f)
+                    )
+                )
             }
         },
         containerColor = StadiumDark
@@ -193,15 +211,14 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
             // Top Tournament Banner (1/8th screen height)
             TournamentHeaderBanner(bannerUrl = appSettings?.bannerImageUrl)
 
-            // User Session Banner
+            // Compact User Session Banner
             UserSessionBanner(
-                currentUser = currentUser,
-                onSwitchProfile = { showAuthDialog = true }
+                currentUser = currentUser
             )
 
             // SCHOLES Special Admin Activity Notifications
             val isScholesUser = currentUser?.username?.equals("scholes", ignoreCase = true) == true
-            if (isScholesUser) {
+            if (isScholesUser && !isScholesCardDismissed) {
                 val scholesAdminLogs = allAnnouncements.filter { it.title.contains("فعالیت مدیران") || it.title.startsWith("📌") }
                 if (scholesAdminLogs.isNotEmpty()) {
                     var isExpanded by remember { mutableStateOf(true) }
@@ -232,18 +249,31 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "🔔 گزارش فعالیت مدیران (ویژه SCHOLES)",
+                                        text = "🔔 گزارش فعالیت مدیران",
                                         fontWeight = FontWeight.Bold,
                                         color = SportGold,
                                         fontSize = 13.sp
                                     )
                                 }
-                                TextButton(onClick = { isExpanded = !isExpanded }) {
-                                    Text(
-                                        text = if (isExpanded) "پنهان‌سازی" else "نمایش (${scholesAdminLogs.size})",
-                                        color = StadiumWhite,
-                                        fontSize = 11.sp
-                                    )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(onClick = { isExpanded = !isExpanded }) {
+                                        Text(
+                                            text = if (isExpanded) "پنهان‌سازی" else "نمایش (${scholesAdminLogs.size})",
+                                            color = StadiumWhite,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { isScholesCardDismissed = true },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "بستن گزارش",
+                                            tint = StadiumWhite,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                             if (isExpanded) {
@@ -336,13 +366,13 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                                     lineHeight = 20.sp
                                 )
                                 Button(
-                                    onClick = { showAuthDialog = true },
-                                    colors = ButtonDefaults.buttonColors(containerColor = SportLightGreen),
+                                    onClick = { viewModel.logout() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.85f)),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Icon(imageVector = Icons.Default.SwapHoriz, contentDescription = null, tint = StadiumDark)
+                                    Icon(imageVector = Icons.Default.ExitToApp, contentDescription = null, tint = StadiumWhite)
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("ورود با حساب کاربری دیگر", color = StadiumDark, fontWeight = FontWeight.Bold)
+                                    Text("خروج از حساب کاربری", color = StadiumWhite, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -363,7 +393,7 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
                             stages = viewModel.stages,
                             allStageSubmissions = allStageSubmissions,
                             viewModel = viewModel,
-                            onLoginRequired = { showAuthDialog = true }
+                            onLoginRequired = { viewModel.logout() }
                         )
                         2 -> PublicPredictionsScreen(
                             allMatches = allMatches,
@@ -400,25 +430,6 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
         }
     }
 
-    // Auth Switching Profile Dialog
-    if (showAuthDialog) {
-        AuthDialog(
-            authError = authError,
-            allUsers = leaderboard,
-            onDismiss = { showAuthDialog = false },
-            onLogin = { username, password ->
-                viewModel.login(username, password) {
-                    showAuthDialog = false
-                }
-            },
-            onLogout = {
-                viewModel.logout()
-                showAuthDialog = false
-            },
-            currentUser = currentUser
-        )
-    }
-
     // Add/Edit prediction scores Dialog
     if (showPredictionDialogForMatch != null) {
         val match = showPredictionDialogForMatch!!
@@ -453,87 +464,101 @@ fun FootballPredictorApp(viewModel: FootballPredictorViewModel) {
             }
         )
     }
+
+    // Confirmation dialog for Logout tab
+    if (showConfirmLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmLogoutDialog = false },
+            title = {
+                Text(
+                    text = "خروج از حساب کاربری",
+                    color = SportGold,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "آیا از خروج از حساب کاربری خود اطمینان دارید؟",
+                    color = StadiumWhite,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showConfirmLogoutDialog = false
+                        viewModel.logout()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red, contentColor = Color.White)
+                ) {
+                    Text("خروج", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmLogoutDialog = false }) {
+                    Text("انصراف", color = StadiumGray)
+                }
+            },
+            containerColor = StadiumSurface
+        )
+    }
 }
 
 @Composable
 fun UserSessionBanner(
-    currentUser: User?,
-    onSwitchProfile: () -> Unit
+    currentUser: User?
 ) {
-    Card(
+    if (currentUser == null) return
+
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = StadiumSurface
-        ),
-        shape = RoundedCornerShape(12.dp)
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+        color = StadiumSurface.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(0.5.dp, SportGold.copy(alpha = 0.2f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(SportGreen, SportLightGreen)
-                            ),
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (currentUser?.isAdmin == true) Icons.Default.AdminPanelSettings else Icons.Default.Person,
-                        contentDescription = null,
-                        tint = StadiumWhite,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                Column {
-                    Text(
-                        text = currentUser?.displayName ?: "کاربر مهمان",
-                        fontWeight = FontWeight.Bold,
-                        color = StadiumWhite,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = if (currentUser == null) "برای ثبت پیش‌بینی وارد شوید" 
-                               else if (currentUser.isAdmin) "مدیر سیستم (امتیاز: ${currentUser.totalPoints})" 
-                               else "شناسه کاربری: @${currentUser.username} | امتیاز: ${currentUser.totalPoints}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (currentUser?.isAdmin == true) SportGold else StadiumGray
-                    )
-                }
-            }
-
-            Button(
-                onClick = onSwitchProfile,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (currentUser == null) SportLightGreen else StadiumCard,
-                    contentColor = if (currentUser == null) StadiumDark else SportGold
-                ),
-                shape = RoundedCornerShape(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Refresh,
+                    imageVector = if (currentUser.isAdmin) Icons.Default.AdminPanelSettings else Icons.Default.Person,
                     contentDescription = null,
+                    tint = if (currentUser.isAdmin) SportGold else SportLightGreen,
                     modifier = Modifier.size(16.dp)
                 )
-                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = if (currentUser == null) "ورود / عضویت" else "تغییر پروفایل",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
+                    text = currentUser.displayName,
+                    fontWeight = FontWeight.Bold,
+                    color = StadiumWhite,
+                    fontSize = 12.sp
+                )
+                Text(
+                    text = "(@${currentUser.username})",
+                    color = StadiumGray,
+                    fontSize = 11.sp
+                )
+            }
+
+            Surface(
+                color = SportGold.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = "امتیاز: ${currentUser.totalPoints}",
+                    color = SportGold,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                 )
             }
         }
@@ -684,7 +709,7 @@ fun LeaderboardScreen(
                         Text(text = "تغییر", fontWeight = FontWeight.Bold, color = StadiumGray, fontSize = 11.sp, modifier = Modifier.width(90.dp), textAlign = TextAlign.Center)
                         Text(text = "کاربر", fontWeight = FontWeight.Bold, color = StadiumGray, fontSize = 11.sp, modifier = Modifier.width(160.dp))
                         Text(text = "آخرین بازی", fontWeight = FontWeight.Bold, color = StadiumGray, fontSize = 11.sp, modifier = Modifier.width(100.dp), textAlign = TextAlign.Center)
-                        Text(text = "جریمه", fontWeight = FontWeight.Bold, color = StadiumGray, fontSize = 11.sp, modifier = Modifier.width(100.dp), textAlign = TextAlign.Center)
+                        Text(text = "جریمه / پاداش", fontWeight = FontWeight.Bold, color = StadiumGray, fontSize = 11.sp, modifier = Modifier.width(100.dp), textAlign = TextAlign.Center)
                         Text(text = "امتیاز کل", fontWeight = FontWeight.Bold, color = StadiumGray, fontSize = 11.sp, modifier = Modifier.width(100.dp), textAlign = TextAlign.Center)
 
                         // Dynamic Bonus Items Columns Header
@@ -849,12 +874,21 @@ fun LeaderboardScreen(
                                     fontSize = 13.sp
                                 )
 
-                                // Disciplinary Penalty Points (جریمه انضباطی)
-                                val penaltyPointsText = if (user.penaltyPoints > 0) "-${user.penaltyPoints}" else "۰"
+                                // Disciplinary Penalty / Bonus Points (جریمه و پاداش انضباطی)
+                                val penaltyPointsText = when {
+                                    user.penaltyPoints > 0 -> "-${user.penaltyPoints}"
+                                    user.penaltyPoints < 0 -> "+${-user.penaltyPoints}"
+                                    else -> "۰"
+                                }
+                                val penaltyTextColor = when {
+                                    user.penaltyPoints > 0 -> Color.Red.copy(alpha = 0.85f)
+                                    user.penaltyPoints < 0 -> SportLightGreen
+                                    else -> StadiumGray
+                                }
                                 Text(
                                     text = penaltyPointsText,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (user.penaltyPoints > 0) Color.Red.copy(alpha = 0.85f) else StadiumGray,
+                                    color = penaltyTextColor,
                                     modifier = Modifier.width(100.dp),
                                     textAlign = TextAlign.Center,
                                     fontSize = 13.sp
@@ -907,43 +941,96 @@ fun LeaderboardScreen(
 }
 
 @Composable
-fun ScoreStepper(
+fun ScoreInputField(
     value: Int,
     onValueChange: (Int) -> Unit,
     enabled: Boolean
 ) {
     var textState by remember(value) { mutableStateOf(value.toString()) }
+    var isFocused by remember { mutableStateOf(false) }
 
-    OutlinedTextField(
-        value = textState,
-        onValueChange = { input ->
-            val digitsOnly = input.filter { it.isDigit() }.take(2)
-            textState = digitsOnly
-            val parsed = digitsOnly.toIntOrNull() ?: 0
-            onValueChange(parsed)
-        },
-        enabled = enabled,
+    LaunchedEffect(value, isFocused) {
+        if (!isFocused) {
+            val currentInt = textState.toIntOrNull()
+            if (currentInt != value) {
+                textState = value.toString()
+            }
+        }
+    }
+
+    Box(
         modifier = Modifier
-            .width(52.dp)
-            .height(48.dp),
-        textStyle = androidx.compose.ui.text.TextStyle(
-            textAlign = TextAlign.Center,
-            color = if (enabled) StadiumWhite else StadiumGray,
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp
-        ),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        singleLine = true,
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = SportLightGreen,
-            unfocusedBorderColor = StadiumCard,
-            disabledBorderColor = StadiumCard.copy(alpha = 0.4f),
-            focusedContainerColor = StadiumDark,
-            unfocusedContainerColor = StadiumDark,
-            disabledContainerColor = StadiumDark
-        ),
-        shape = RoundedCornerShape(8.dp)
-    )
+            .width(46.dp)
+            .height(44.dp)
+            .background(StadiumDark, RoundedCornerShape(10.dp))
+            .border(
+                width = if (isFocused) 1.5.dp else 1.dp,
+                color = when {
+                    !enabled -> StadiumCard.copy(alpha = 0.4f)
+                    isFocused -> SportLightGreen
+                    value > 0 -> SportGold.copy(alpha = 0.8f)
+                    else -> StadiumCard
+                },
+                shape = RoundedCornerShape(10.dp)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        BasicTextField(
+            value = textState,
+            onValueChange = { input ->
+                val digitsOnly = input.filter { it.isDigit() }.take(2)
+                val sanitized = when {
+                    digitsOnly.isEmpty() -> ""
+                    // If user enters "00" or multiple zeros, treat as "0"
+                    digitsOnly.all { it == '0' } -> "0"
+                    // If user has "0" and types another digit e.g. "03", convert to "3"
+                    digitsOnly.length > 1 && digitsOnly.startsWith("0") -> digitsOnly.drop(1)
+                    else -> digitsOnly
+                }
+                textState = sanitized
+                val parsed = sanitized.toIntOrNull() ?: 0
+                onValueChange(parsed)
+            },
+            enabled = enabled,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp)
+                .onFocusChanged { focusState ->
+                    isFocused = focusState.isFocused
+                    if (!focusState.isFocused) {
+                        if (textState.isEmpty() || textState == "00" || textState.all { it == '0' }) {
+                            textState = "0"
+                            onValueChange(0)
+                        } else {
+                            val currentInt = textState.toIntOrNull() ?: 0
+                            textState = currentInt.toString()
+                            onValueChange(currentInt)
+                        }
+                    }
+                },
+            textStyle = TextStyle(
+                textAlign = TextAlign.Center,
+                color = if (enabled) {
+                    if (value > 0) SportGold else StadiumWhite
+                } else StadiumGray,
+                fontWeight = FontWeight.Black,
+                fontSize = 19.sp
+            ),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(SportLightGreen)
+        )
+    }
+}
+
+// Alias for backwards compatibility if needed
+@Composable
+fun ScoreStepper(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    enabled: Boolean
+) {
+    ScoreInputField(value = value, onValueChange = onValueChange, enabled = enabled)
 }
 
 @Composable
@@ -963,17 +1050,23 @@ fun MatchesScreen(
     var selectedStage by remember { mutableStateOf("مرحله اول گروهی") }
 
     // Temporary map of predictions being edited: matchId -> Pair(homeScore, awayScore)
-    var tempPredictions by remember { mutableStateOf(mapOf<Int, Pair<Int, Int>>()) }
+    var tempPredictions by remember(currentUser?.id, selectedStage) { mutableStateOf(mapOf<Int, Pair<Int, Int>>()) }
 
     // Dialog state for batch stage prediction submission
     var showConfirmStageSubmitDialog by remember { mutableStateOf(false) }
 
-    // Sync tempPredictions with existing user predictions when stage or user changes
-    LaunchedEffect(selectedStage, userPredictions) {
+    // Sync tempPredictions with existing user predictions when stage, user or matches change
+    LaunchedEffect(selectedStage, userPredictions, currentUser?.id, allMatches) {
+        val currentUserId = currentUser?.id ?: return@LaunchedEffect
         val initialMap = mutableMapOf<Int, Pair<Int, Int>>()
         userPredictions.forEach { up ->
-            if (up.match.stageName == selectedStage) {
+            if (up.prediction.userId == currentUserId && up.match.stageName == selectedStage) {
                 initialMap[up.prediction.matchId] = Pair(up.prediction.predictedHomeScore, up.prediction.predictedAwayScore)
+            }
+        }
+        allMatches.filter { it.stageName == selectedStage }.forEach { m ->
+            if (!initialMap.containsKey(m.id)) {
+                initialMap[m.id] = Pair(0, 0)
             }
         }
         tempPredictions = initialMap
@@ -1279,9 +1372,9 @@ fun MatchesScreen(
                 }
             }
         } else {
-            items(filteredMatches) { match ->
-                val userPred = userPredictions.find { it.prediction.matchId == match.id }
-                val scorePair = tempPredictions[match.id] ?: Pair(0, 0)
+            items(filteredMatches, key = { it.id }) { match ->
+                val userPred = userPredictions.find { it.prediction.matchId == match.id && it.prediction.userId == currentUser?.id }
+                val scorePair = tempPredictions[match.id] ?: userPred?.let { Pair(it.prediction.predictedHomeScore, it.prediction.predictedAwayScore) } ?: Pair(0, 0)
                 
                 MatchCard(
                     match = match,
@@ -1293,6 +1386,9 @@ fun MatchesScreen(
                     onTempPredictionChange = { home, away ->
                         tempPredictions = tempPredictions.toMutableMap().apply {
                             put(match.id, Pair(home, away))
+                        }
+                        if (currentUser != null && !isSubmitted) {
+                            viewModel.submitPrediction(match.id, home, away)
                         }
                     },
                     onPredictClick = {
@@ -1362,9 +1458,10 @@ fun MatchesScreen(
                     ) {
                         Button(
                             onClick = {
-                                // 1. Save all edited predictions to the DB
-                                tempPredictions.forEach { (matchId, scores) ->
-                                    viewModel.submitPrediction(matchId, scores.first, scores.second)
+                                // 1. Save all matches for this stage (including untouched 0-0 matches)
+                                allMatches.filter { it.stageName == selectedStage && it.isPublished && !it.isFinished }.forEach { m ->
+                                    val scores = tempPredictions[m.id] ?: Pair(0, 0)
+                                    viewModel.submitPrediction(m.id, scores.first, scores.second)
                                 }
                                 // 2. Mark this stage as finalized
                                 viewModel.submitStagePredictions(selectedStage)
@@ -1499,18 +1596,24 @@ fun MatchCard(
                         }
                     } else {
                         if (currentUser != null && !isSubmitted) {
-                            // Display the beautiful inline steppers directly!
+                            // Display direct numerical score input fields
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                ScoreStepper(
+                                ScoreInputField(
                                     value = tempHomeScore,
                                     onValueChange = { newHome -> onTempPredictionChange(newHome, tempAwayScore) },
                                     enabled = true
                                 )
-                                Text(text = ":", color = StadiumGray, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                ScoreStepper(
+                                Text(
+                                    text = ":",
+                                    color = StadiumGray,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 2.dp)
+                                )
+                                ScoreInputField(
                                     value = tempAwayScore,
                                     onValueChange = { newAway -> onTempPredictionChange(tempHomeScore, newAway) },
                                     enabled = true
@@ -1601,7 +1704,7 @@ fun MatchCard(
                                 Icon(Icons.Default.Edit, contentDescription = null, tint = SportGold, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (userPred != null) "پیش‌بینی موقت شما: $tempHomeScore - $tempAwayScore" else "پیش‌بینی ثبت نشده است",
+                                    text = "پیش‌بینی شما: $tempHomeScore - $tempAwayScore",
                                     color = SportGold,
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.Bold
@@ -1793,12 +1896,13 @@ fun BonusPredictionsAdminTab(viewModel: FootballPredictorViewModel) {
                     Button(
                         onClick = { showAddBonusDialog = true },
                         colors = ButtonDefaults.buttonColors(containerColor = SportGold, contentColor = StadiumDark),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        shape = RoundedCornerShape(16.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("افزودن امتیاز تشویقی", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("افزودن تشویقی", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -2313,6 +2417,7 @@ fun UserAdminCard(
 ) {
     val isScholes = user.username.equals("scholes", ignoreCase = true)
     var showConfirmDeleteDialog by remember { mutableStateOf(false) }
+    var showCustomAdjustmentDialog by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2485,7 +2590,7 @@ fun UserAdminCard(
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = "جریمه: ",
+                        text = "جریمه/پاداش: ",
                         color = StadiumGray,
                         fontSize = 11.sp
                     )
@@ -2497,21 +2602,36 @@ fun UserAdminCard(
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                         )
                     } else {
+                        // Minus button: increases penalty points by 1 (deducts 1 point from user total)
                         IconButton(
-                            onClick = { if (user.penaltyPoints > 0) onUpdatePenalty(user.penaltyPoints - 1) },
+                            onClick = { onUpdatePenalty(user.penaltyPoints + 1) },
                             modifier = Modifier.size(24.dp)
                         ) {
                             Text("-", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
+                        val adjustmentText = when {
+                            user.penaltyPoints > 0 -> "-${user.penaltyPoints}"
+                            user.penaltyPoints < 0 -> "+${-user.penaltyPoints}"
+                            else -> "۰"
+                        }
+                        val adjustmentColor = when {
+                            user.penaltyPoints > 0 -> Color.Red
+                            user.penaltyPoints < 0 -> SportLightGreen
+                            else -> StadiumWhite
+                        }
                         Text(
-                            text = "${user.penaltyPoints}",
-                            color = if (user.penaltyPoints > 0) Color.Red else StadiumWhite,
+                            text = adjustmentText,
+                            color = adjustmentColor,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 4.dp)
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable { showCustomAdjustmentDialog = true }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
                         )
+                        // Plus button: decreases penalty points by 1 (adds 1 point to user total / bonus)
                         IconButton(
-                            onClick = { onUpdatePenalty(user.penaltyPoints + 1) },
+                            onClick = { onUpdatePenalty(user.penaltyPoints - 1) },
                             modifier = Modifier.size(24.dp)
                         ) {
                             Text("+", color = SportLightGreen, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -2557,6 +2677,94 @@ fun UserAdminCard(
                 }
             },
             containerColor = StadiumSurface
+        )
+    }
+
+    if (showCustomAdjustmentDialog) {
+        var pointsInput by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showCustomAdjustmentDialog = false },
+            containerColor = StadiumSurface,
+            title = {
+                Text(
+                    text = "جریمه یا پاداش - ${user.displayName}",
+                    color = SportGold,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "امتیاز کل: ${user.totalPoints} | وضعیت کنونی: ${if (user.penaltyPoints > 0) "-${user.penaltyPoints} (جریمه)" else if (user.penaltyPoints < 0) "+${-user.penaltyPoints} (پاداش)" else "۰ (بدون جریمه/پاداش)"}",
+                        color = StadiumWhite,
+                        fontSize = 12.sp
+                    )
+                    OutlinedTextField(
+                        value = pointsInput,
+                        onValueChange = { pointsInput = it.filter { c -> c.isDigit() } },
+                        label = { Text("تعداد امتیاز") },
+                        placeholder = { Text("مثال: 5") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = SportGold,
+                            unfocusedBorderColor = StadiumCard
+                        )
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val pts = pointsInput.toIntOrNull() ?: 0
+                                if (pts > 0) {
+                                    onUpdatePenalty(user.penaltyPoints + pts)
+                                }
+                                showCustomAdjustmentDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.85f)),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("کسر امتیاز (جریمه)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            onClick = {
+                                val pts = pointsInput.toIntOrNull() ?: 0
+                                if (pts > 0) {
+                                    onUpdatePenalty(user.penaltyPoints - pts)
+                                }
+                                showCustomAdjustmentDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = SportLightGreen),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("افزایش امتیاز (پاداش)", color = StadiumDark, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (user.penaltyPoints != 0) {
+                        TextButton(
+                            onClick = {
+                                onUpdatePenalty(0)
+                                showCustomAdjustmentDialog = false
+                            },
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        ) {
+                            Text("صفر کردن جریمه و پاداش", color = StadiumGray, fontSize = 11.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showCustomAdjustmentDialog = false }) {
+                    Text("انصراف", color = StadiumGray)
+                }
+            }
         )
     }
 }
@@ -2609,11 +2817,17 @@ fun AddUserDialog(
                 OutlinedTextField(
                     value = displayName,
                     onValueChange = { displayName = it },
-                    label = { Text("نام و نام خانوادگی (مثلاً محمد رضایی)") },
+                    label = { Text("نام و نام خانوادگی (مثلاً محمد رضایی)", color = StadiumGray) },
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(color = StadiumWhite, fontSize = 14.sp),
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = StadiumWhite,
+                        unfocusedTextColor = StadiumWhite,
                         focusedBorderColor = SportLightGreen,
-                        focusedLabelColor = SportLightGreen
+                        unfocusedBorderColor = StadiumCard,
+                        focusedLabelColor = SportLightGreen,
+                        unfocusedLabelColor = StadiumGray,
+                        cursorColor = SportLightGreen
                     ),
                     singleLine = true
                 )
@@ -2621,11 +2835,17 @@ fun AddUserDialog(
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("نام کاربری انگلیسی (Username)") },
+                    label = { Text("نام کاربری انگلیسی (Username)", color = StadiumGray) },
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(color = StadiumWhite, fontSize = 14.sp),
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = StadiumWhite,
+                        unfocusedTextColor = StadiumWhite,
                         focusedBorderColor = SportLightGreen,
-                        focusedLabelColor = SportLightGreen
+                        unfocusedBorderColor = StadiumCard,
+                        focusedLabelColor = SportLightGreen,
+                        unfocusedLabelColor = StadiumGray,
+                        cursorColor = SportLightGreen
                     ),
                     singleLine = true
                 )
@@ -2633,11 +2853,17 @@ fun AddUserDialog(
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("رمز عبور (Password)") },
+                    label = { Text("رمز عبور (Password)", color = StadiumGray) },
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(color = StadiumWhite, fontSize = 14.sp),
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = StadiumWhite,
+                        unfocusedTextColor = StadiumWhite,
                         focusedBorderColor = SportLightGreen,
-                        focusedLabelColor = SportLightGreen
+                        unfocusedBorderColor = StadiumCard,
+                        focusedLabelColor = SportLightGreen,
+                        unfocusedLabelColor = StadiumGray,
+                        cursorColor = SportLightGreen
                     ),
                     singleLine = true
                 )
@@ -2747,6 +2973,12 @@ fun MatchManagementTab(
             compareBy<MatchEntity> { it.isFinished }
                 .thenBy { it.id }
         )
+    }
+
+    var scoringStageFilter by remember { mutableStateOf("همه مراحل") }
+    val filteredScoringMatches = remember(sortedMatches, scoringStageFilter) {
+        if (scoringStageFilter == "همه مراحل") sortedMatches
+        else sortedMatches.filter { it.stageName == scoringStageFilter }
     }
 
     if (showConfirmDialog) {
@@ -3251,16 +3483,54 @@ fun MatchManagementTab(
         }
 
         item {
-            Text(
-                text = "⚽ ثبت نتایج و مدیریت امتیازدهی بازی‌ها",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = StadiumWhite,
-                modifier = Modifier.padding(vertical = 4.dp)
-            )
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Text(
+                    text = "⚽ ثبت نتایج و مدیریت امتیازدهی بازی‌ها",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = StadiumWhite
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "انتخاب مرحله جهت مشاهده و ثبت نتیجه:",
+                    color = StadiumGray,
+                    fontSize = 11.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                val allScoringStages = listOf("همه مراحل") + viewModel.stages
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(allScoringStages) { stage ->
+                        val isSelected = scoringStageFilter == stage
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    color = if (isSelected) SportGold else StadiumSurface,
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) SportGold else StadiumCard,
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .clickable { scoringStageFilter = stage }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = stage,
+                                color = if (isSelected) StadiumDark else StadiumWhite,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
         }
 
-        if (sortedMatches.isEmpty()) {
+        if (filteredScoringMatches.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -3268,11 +3538,14 @@ fun MatchManagementTab(
                         .padding(24.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(text = "هیچ بازی ثبت‌شده‌ای موجود نیست.", color = StadiumGray)
+                    Text(
+                        text = if (scoringStageFilter == "همه مراحل") "هیچ بازی ثبت‌شده‌ای موجود نیست." else "هیچ بازی‌ای در مرحله «$scoringStageFilter» یافت نشد.",
+                        color = StadiumGray
+                    )
                 }
             }
         } else {
-            items(sortedMatches) { match ->
+            items(filteredScoringMatches) { match ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3659,8 +3932,8 @@ fun ProxyPredictionsTab(
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 behalfMatches.forEach { match ->
                                     val existingPred = predictionsByMatch[match.id]
-                                    var homeScoreInput by remember(match, existingPred) { mutableStateOf(existingPred?.predictedHomeScore?.toString() ?: "0") }
-                                    var awayScoreInput by remember(match, existingPred) { mutableStateOf(existingPred?.predictedAwayScore?.toString() ?: "0") }
+                                    var homeScoreInput by remember(match.id, targetUser.id, existingPred?.predictedHomeScore) { mutableStateOf(existingPred?.predictedHomeScore?.toString() ?: "0") }
+                                    var awayScoreInput by remember(match.id, targetUser.id, existingPred?.predictedAwayScore) { mutableStateOf(existingPred?.predictedAwayScore?.toString() ?: "0") }
 
                                     Row(
                                         modifier = Modifier
@@ -3687,7 +3960,15 @@ fun ProxyPredictionsTab(
                                         ) {
                                             OutlinedTextField(
                                                 value = homeScoreInput,
-                                                onValueChange = { homeScoreInput = it.filter { char -> char.isDigit() } },
+                                                onValueChange = { input ->
+                                                    val digits = input.filter { it.isDigit() }.take(2)
+                                                    homeScoreInput = when {
+                                                        digits.isEmpty() -> ""
+                                                        digits.all { it == '0' } -> "0"
+                                                        digits.length > 1 && digits.startsWith("0") -> digits.drop(1)
+                                                        else -> digits
+                                                    }
+                                                },
                                                 modifier = Modifier.width(45.dp).height(48.dp),
                                                 textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, color = StadiumWhite, fontSize = 13.sp),
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -3697,7 +3978,15 @@ fun ProxyPredictionsTab(
                                             Text("-", color = StadiumWhite)
                                             OutlinedTextField(
                                                 value = awayScoreInput,
-                                                onValueChange = { awayScoreInput = it.filter { char -> char.isDigit() } },
+                                                onValueChange = { input ->
+                                                    val digits = input.filter { it.isDigit() }.take(2)
+                                                    awayScoreInput = when {
+                                                        digits.isEmpty() -> ""
+                                                        digits.all { it == '0' } -> "0"
+                                                        digits.length > 1 && digits.startsWith("0") -> digits.drop(1)
+                                                        else -> digits
+                                                    }
+                                                },
                                                 modifier = Modifier.width(45.dp).height(48.dp),
                                                 textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, color = StadiumWhite, fontSize = 13.sp),
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -4944,8 +5233,8 @@ private fun LegacyAdminSection(
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 behalfMatches.forEach { match ->
                                     val existingPred = predictionsByMatch[match.id]
-                                    var homeScoreInput by remember(match, existingPred) { mutableStateOf(existingPred?.predictedHomeScore?.toString() ?: "0") }
-                                    var awayScoreInput by remember(match, existingPred) { mutableStateOf(existingPred?.predictedAwayScore?.toString() ?: "0") }
+                                    var homeScoreInput by remember(match.id, targetUser.id, existingPred?.predictedHomeScore) { mutableStateOf(existingPred?.predictedHomeScore?.toString() ?: "0") }
+                                    var awayScoreInput by remember(match.id, targetUser.id, existingPred?.predictedAwayScore) { mutableStateOf(existingPred?.predictedAwayScore?.toString() ?: "0") }
 
                                     Row(
                                         modifier = Modifier
@@ -4972,7 +5261,15 @@ private fun LegacyAdminSection(
                                         ) {
                                             OutlinedTextField(
                                                 value = homeScoreInput,
-                                                onValueChange = { homeScoreInput = it.filter { char -> char.isDigit() } },
+                                                onValueChange = { input ->
+                                                    val digits = input.filter { it.isDigit() }.take(2)
+                                                    homeScoreInput = when {
+                                                        digits.isEmpty() -> ""
+                                                        digits.all { it == '0' } -> "0"
+                                                        digits.length > 1 && digits.startsWith("0") -> digits.drop(1)
+                                                        else -> digits
+                                                    }
+                                                },
                                                 modifier = Modifier.width(45.dp).height(48.dp),
                                                 textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, color = StadiumWhite, fontSize = 13.sp),
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -4982,7 +5279,15 @@ private fun LegacyAdminSection(
                                             Text("-", color = StadiumWhite)
                                             OutlinedTextField(
                                                 value = awayScoreInput,
-                                                onValueChange = { awayScoreInput = it.filter { char -> char.isDigit() } },
+                                                onValueChange = { input ->
+                                                    val digits = input.filter { it.isDigit() }.take(2)
+                                                    awayScoreInput = when {
+                                                        digits.isEmpty() -> ""
+                                                        digits.all { it == '0' } -> "0"
+                                                        digits.length > 1 && digits.startsWith("0") -> digits.drop(1)
+                                                        else -> digits
+                                                    }
+                                                },
                                                 modifier = Modifier.width(45.dp).height(48.dp),
                                                 textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, color = StadiumWhite, fontSize = 13.sp),
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -5135,111 +5440,157 @@ private fun LegacyAdminSection(
 */
 
 @Composable
-fun AuthDialog(
+fun LoginScreen(
     authError: String?,
-    allUsers: List<User>,
-    onDismiss: () -> Unit,
-    onLogin: (String, String) -> Unit,
-    onLogout: () -> Unit,
-    currentUser: User?
+    onLogin: (username: String, password: String) -> Unit
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(StadiumDark)
+            .padding(20.dp),
+        contentAlignment = Alignment.Center
+    ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .widthIn(max = 420.dp),
             colors = CardDefaults.cardColors(containerColor = StadiumSurface),
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.5.dp, SportGold.copy(alpha = 0.5f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .padding(20.dp)
+                    .padding(24.dp)
                     .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(SportGold.copy(alpha = 0.15f), CircleShape)
+                        .border(1.dp, SportGold, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SportsSoccer,
+                        contentDescription = null,
+                        tint = SportGold,
+                        modifier = Modifier.size(36.dp)
+                    )
+                }
+
                 Text(
-                    text = "🔐 ورود به اپلیکیشن Footballia",
-                    style = MaterialTheme.typography.titleLarge,
+                    text = "ورود به سامانه پیش‌بینی فوتبال",
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = SportGold,
+                    color = StadiumWhite,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = "جهت استفاده از برنامه لطفاً نام کاربری و رمز عبور اختصاصی خود را وارد نمایید.",
+                    fontSize = 12.sp,
+                    color = StadiumGray,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    lineHeight = 18.sp
                 )
 
                 if (authError != null) {
-                    Text(
-                        text = authError,
-                        color = Color.Red,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.Red.copy(alpha = 0.15f)),
+                        border = BorderStroke(1.dp, Color.Red),
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
-                    )
+                    ) {
+                        Text(
+                            text = authError,
+                            color = Color.Red,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .padding(10.dp)
+                                .fillMaxWidth()
+                        )
+                    }
                 }
 
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("نام کاربری انگلیسی (Username)") },
+                    label = { Text("نام کاربری (Username)", color = StadiumGray) },
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(color = StadiumWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium),
+                    singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = SportLightGreen,
-                        focusedLabelColor = SportLightGreen
+                        focusedTextColor = StadiumWhite,
+                        unfocusedTextColor = StadiumWhite,
+                        focusedBorderColor = SportGold,
+                        unfocusedBorderColor = StadiumCard,
+                        focusedLabelColor = SportGold,
+                        unfocusedLabelColor = StadiumGray,
+                        cursorColor = SportGold
                     ),
-                    singleLine = true
+                    shape = RoundedCornerShape(10.dp)
                 )
 
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("رمز عبور (Password)") },
+                    label = { Text("رمز عبور (Password)", color = StadiumGray) },
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(color = StadiumWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium),
+                    singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = SportLightGreen,
-                        focusedLabelColor = SportLightGreen
+                        focusedTextColor = StadiumWhite,
+                        unfocusedTextColor = StadiumWhite,
+                        focusedBorderColor = SportGold,
+                        unfocusedBorderColor = StadiumCard,
+                        focusedLabelColor = SportGold,
+                        unfocusedLabelColor = StadiumGray,
+                        cursorColor = SportGold
                     ),
-                    singleLine = true
+                    shape = RoundedCornerShape(10.dp)
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            onLogin(username, password)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = SportLightGreen),
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = "ورود به حساب",
-                            color = StadiumDark,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    if (currentUser != null) {
-                        Button(
-                            onClick = onLogout,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.8f)),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("خروج", fontWeight = FontWeight.Bold)
+                Button(
+                    onClick = {
+                        if (username.isNotBlank() && password.isNotBlank()) {
+                            onLogin(username.trim(), password.trim())
                         }
-                    }
+                    },
+                    enabled = username.isNotBlank() && password.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SportGold,
+                        contentColor = StadiumDark,
+                        disabledContainerColor = StadiumCard,
+                        disabledContentColor = StadiumGray
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                ) {
+                    Icon(Icons.Default.Lock, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "ورود به حساب کاربری",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
                 }
 
                 Text(
-                    text = "ℹ️ ثبت نام کاربران جدید فقط توسط مدیر سیستم از طریق پنل مدیریت امکان‌پذیر می‌باشد.",
-                    color = StadiumGray,
+                    text = "ℹ️ حساب‌های جدید فقط توسط مدیر سیستم ایجاد می‌شوند.",
                     fontSize = 11.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    color = StadiumGray,
+                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -5453,8 +5804,14 @@ fun AdminScoreMatchDialog(
                             value = homeText,
                             onValueChange = { input ->
                                 val digits = input.filter { it.isDigit() }.take(2)
-                                homeText = digits
-                                homeScore = digits.toIntOrNull() ?: 0
+                                val sanitized = when {
+                                    digits.isEmpty() -> ""
+                                    digits.all { it == '0' } -> "0"
+                                    digits.length > 1 && digits.startsWith("0") -> digits.drop(1)
+                                    else -> digits
+                                }
+                                homeText = sanitized
+                                homeScore = sanitized.toIntOrNull() ?: 0
                             },
                             modifier = Modifier.width(60.dp).height(48.dp),
                             textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, color = SportGold, fontSize = 18.sp, fontWeight = FontWeight.Bold),
@@ -5476,8 +5833,14 @@ fun AdminScoreMatchDialog(
                             value = awayText,
                             onValueChange = { input ->
                                 val digits = input.filter { it.isDigit() }.take(2)
-                                awayText = digits
-                                awayScore = digits.toIntOrNull() ?: 0
+                                val sanitized = when {
+                                    digits.isEmpty() -> ""
+                                    digits.all { it == '0' } -> "0"
+                                    digits.length > 1 && digits.startsWith("0") -> digits.drop(1)
+                                    else -> digits
+                                }
+                                awayText = sanitized
+                                awayScore = sanitized.toIntOrNull() ?: 0
                             },
                             modifier = Modifier.width(60.dp).height(48.dp),
                             textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, color = SportGold, fontSize = 18.sp, fontWeight = FontWeight.Bold),
@@ -5751,9 +6114,9 @@ fun PublicPredictionsScreen(
         } else {
             // Stage Matches to display
             val stageMatches = allMatches.filter { it.stageName == selectedStage && it.isPublished }
-            val nonAdminUsers = leaderboard.filter { !it.isAdmin }
+            val participants = leaderboard.filter { it.isActive }
 
-            if (nonAdminUsers.isEmpty()) {
+            if (participants.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(24.dp),
@@ -5772,7 +6135,7 @@ fun PublicPredictionsScreen(
                     }
                 }
             } else {
-                items(nonAdminUsers) { user ->
+                items(participants) { user ->
                     val userSubmitted = allStageSubmissions.any { 
                         it.userId == user.id && it.stageName == selectedStage && it.isSubmitted 
                     }
