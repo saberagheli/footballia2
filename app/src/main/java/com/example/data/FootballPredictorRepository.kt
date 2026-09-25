@@ -1,128 +1,101 @@
-package com.example.data
+package com.example.footballia2.data
 
-import com.example.network.*
+import com.example.footballia2.data.local.AppDao
+import com.example.footballia2.data.local.AppSettings
+import com.example.footballia2.data.local.Announcement
+import com.example.footballia2.data.local.BonusItem
+import com.example.footballia2.data.local.BonusPrediction
+import com.example.footballia2.data.local.EliminatedItem
+import com.example.footballia2.data.local.Match
+import com.example.footballia2.data.local.Prediction
+import com.example.footballia2.data.local.User
+import com.example.footballia2.data.remote.ApiClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.withContext
 
 class FootballPredictorRepository(private val appDao: AppDao) {
 
-    // Users
-    val leaderboard: Flow<List<User>> = appDao.getLeaderboard()
+    // --- USERS MANAGEMENT ---
 
-    fun getUserByIdFlow(userId: Int): Flow<User?> {
-        return appDao.getUserByIdFlow(userId)
-    }
+    fun getLeaderboard(): Flow<List<User>> = appDao.getLeaderboard()
+
+    fun getAllUsersList(): Flow<List<User>> = appDao.getAllUsers()
+
+    fun getUserById(userId: Long): Flow<User?> = appDao.getUserById(userId)
 
     suspend fun getUserByUsername(username: String): User? {
         return appDao.getUserByUsername(username)
     }
 
-    suspend fun getUserById(userId: Int): User? {
-        return appDao.getUserById(userId)
-    }
-
-    suspend fun registerUser(username: String, displayName: String, password: String = "123456", isAdmin: Boolean = false): User? {
-        val cleanedUsername = username.trim()
-        val cleanedPassword = password.trim()
-        if (cleanedUsername.isEmpty() || displayName.trim().isEmpty() || cleanedPassword.isEmpty()) return null
-        
-        // Check if exists
-        val existing = appDao.getUserByUsername(cleanedUsername)
-        if (existing != null) return null
-
-        val newUser = User(
-            username = cleanedUsername,
-            displayName = displayName.trim(),
-            password = cleanedPassword,
-            isAdmin = isAdmin,
-            isActive = true
-        )
-        val id = appDao.insertUser(newUser)
-        return newUser.copy(id = id.toInt())
-    }
-
-    suspend fun toggleUserActiveStatus(userId: Int, isActive: Boolean) {
-        val user = appDao.getUserById(userId) ?: return
-        val updated = user.copy(isActive = isActive)
-        appDao.updateUser(updated)
-    }
-
-    suspend fun toggleUserAdminStatus(userId: Int, isAdmin: Boolean) {
-        val user = appDao.getUserById(userId) ?: return
-        val updated = user.copy(isAdmin = isAdmin)
-        appDao.updateUser(updated)
+    suspend fun registerUser(username: String, isAdmin: Boolean = false): Boolean {
+        val existing = appDao.getUserByUsername(username)
+        if (existing != null) return false
+        val user = User(username = username, isAdmin = isAdmin, totalPoints = 0)
+        appDao.insertUser(user)
+        return true
     }
 
     suspend fun updateUser(user: User) {
         appDao.updateUser(user)
     }
 
-    suspend fun deleteUser(userId: Int) {
-        val user = appDao.getUserById(userId) ?: return
-        appDao.deletePredictionsForUser(userId)
-        appDao.deleteUserBonusPredictionsForUser(userId)
-        appDao.deleteStageSubmissionsForUser(userId)
-        appDao.deleteUser(user)
+    suspend fun deleteUser(userId: Long) {
+        appDao.deleteUserById(userId)
+        appDao.deletePredictionsByUserId(userId)
+        appDao.deleteBonusPredictionsByUserId(userId)
     }
 
-    // Matches
-    val allMatches: Flow<List<MatchEntity>> = appDao.getAllMatches()
-
-    fun getMatchesByStage(stageName: String): Flow<List<MatchEntity>> {
-        return appDao.getMatchesByStage(stageName)
+    suspend fun toggleUserActiveStatus(userId: Long, isActive: Boolean) {
+        appDao.updateUserActiveStatus(userId, isActive)
     }
 
-    suspend fun getMatchById(matchId: Int): MatchEntity? {
+    suspend fun toggleUserAdminStatus(userId: Long, isAdmin: Boolean) {
+        appDao.updateUserAdminStatus(userId, isAdmin)
+    }
+
+    suspend fun updateUserCustomPoints(userId: Long, newBonusPoints: Int) {
+        val user = appDao.getUserByIdDirect(userId) ?: return
+        val updatedUser = user.copy(customBonusPoints = newBonusPoints)
+        appDao.updateUser(updatedUser)
+        recalculateSingleUserTotalPoints(userId)
+    }
+
+    // --- MATCHES MANAGEMENT ---
+
+    fun getMatchesByStage(stage: String): Flow<List<Match>> = appDao.getMatchesByStage(stage)
+
+    fun getAllMatchesList(): Flow<List<Match>> = appDao.getAllMatches()
+
+    suspend fun getMatchById(matchId: Long): Match? {
         return appDao.getMatchById(matchId)
     }
 
-    suspend fun createMatch(
-        homeTeam: String, 
-        awayTeam: String, 
-        matchTime: String, 
-        stageName: String,
-        pointsExactScore: Int = 5,
-        pointsWinnerAndGd: Int = 3,
-        pointsWinnerOnly: Int = 2,
-        pointsWrong: Int = 0,
-        isPublished: Boolean = false
-    ): MatchEntity {
-        val match = MatchEntity(
-            homeTeam = homeTeam.trim(),
-            awayTeam = awayTeam.trim(),
-            matchTime = matchTime.trim(),
-            stageName = stageName,
-            pointsExactScore = pointsExactScore,
-            pointsWinnerAndGd = pointsWinnerAndGd,
-            pointsWinnerOnly = pointsWinnerOnly,
-            pointsWrong = pointsWrong,
-            isPublished = isPublished
-        )
-        val id = appDao.insertMatch(match)
-        return match.copy(id = id.toInt())
+    suspend fun createMatch(match: Match) {
+        appDao.insertMatch(match)
     }
 
-    suspend fun updateMatch(match: MatchEntity) {
+    suspend fun updateMatch(match: Match) {
         appDao.updateMatch(match)
     }
 
-    suspend fun deleteMatch(match: MatchEntity) {
-        appDao.deleteMatch(match)
+    suspend fun deleteMatch(matchId: Long) {
+        appDao.deleteMatchById(matchId)
+        appDao.deletePredictionsByMatchId(matchId)
     }
 
-    // Announcements
-    val allAnnouncements: Flow<List<Announcement>> = appDao.getAllAnnouncements()
+    // --- ANNOUNCEMENTS ---
 
-    suspend fun postAnnouncement(title: String, message: String, targetUserIds: String? = null) {
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    fun getAllAnnouncements(): Flow<List<Announcement>> = appDao.getAllAnnouncements()
+
+    suspend fun postAnnouncement(title: String, message: String) {
+        val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
         val announcement = Announcement(
             title = title,
             message = message,
-            timestamp = sdf.format(Date()),
-            targetUserIds = targetUserIds
+            createdAt = dateStr
         )
         appDao.insertAnnouncement(announcement)
     }
@@ -131,408 +104,248 @@ class FootballPredictorRepository(private val appDao: AppDao) {
         appDao.clearAnnouncements()
     }
 
-    // Predictions
-    val allPredictions: Flow<List<Prediction>> = appDao.getAllPredictionsFlow()
-    val appSettings: Flow<AppSettings?> = appDao.getSettingsFlow()
-    val allStageSubmissions: Flow<List<StageSubmission>> = appDao.getAllStageSubmissionsFlow()
+    // --- SETTINGS & GLOBAL PREDICTIONS ---
 
-    suspend fun getAppSettingsDirect(): AppSettings {
-        var settings = appDao.getSettingsDirect()
-        if (settings == null) {
-            settings = AppSettings()
-            appDao.insertSettings(settings)
-        }
-        return settings
-    }
+    fun getAppSettings(): Flow<AppSettings?> = appDao.getAppSettings()
+
+    suspend fun getAppSettingsDirect(): AppSettings? = appDao.getAppSettingsDirect()
 
     suspend fun saveAppSettings(settings: AppSettings) {
-        appDao.insertSettings(settings)
-        recalculateAndSaveAllUsersBonusPoints(settings)
+        appDao.insertAppSettings(settings)
+        recalculateAndSaveAllUsersBonusPoints()
     }
 
-    suspend fun getStageSubmission(userId: Int, stageName: String): StageSubmission? {
-        return appDao.getStageSubmission(userId, stageName)
+    suspend fun submitChampionPrediction(userId: Long, teamName: String) {
+        val user = appDao.getUserByIdDirect(userId) ?: return
+        appDao.updateUser(user.copy(predictedChampion = teamName))
     }
 
-    suspend fun submitStagePredictions(userId: Int, stageName: String) {
-        val submission = StageSubmission(userId = userId, stageName = stageName, isSubmitted = true)
-        appDao.insertStageSubmission(submission)
+    suspend fun submitTopScorerPrediction(userId: Long, playerAndTeam: String) {
+        val user = appDao.getUserByIdDirect(userId) ?: return
+        appDao.updateUser(user.copy(predictedTopScorer = playerAndTeam))
     }
 
-    suspend fun submitChampionPrediction(userId: Int, firstChoice: String, secondChoice: String) {
-        val user = appDao.getUserById(userId) ?: return
-        val updatedUser = user.copy(
-            championFirstChoice = firstChoice,
-            championSecondChoice = secondChoice,
-            championSubmitted = true
-        )
-        appDao.updateUser(updatedUser)
-        
-        val settings = getAppSettingsDirect()
-        recalculateAndSaveAllUsersBonusPoints(settings)
-    }
+    suspend fun recalculateAndSaveAllUsersBonusPoints() {
+        val settings = appDao.getAppSettingsDirect() ?: return
+        val users = appDao.getAllUsersDirect()
 
-    suspend fun submitTopScorerPrediction(userId: Int, playerChoice: String) {
-        val user = appDao.getUserById(userId) ?: return
-        val updatedUser = user.copy(
-            topScorerChoice = playerChoice,
-            topScorerSubmitted = true
-        )
-        appDao.updateUser(updatedUser)
-        
-        val settings = getAppSettingsDirect()
-        recalculateAndSaveAllUsersBonusPoints(settings)
-    }
-
-    suspend fun adminUpdatePenaltyPoints(userId: Int, penaltyPoints: Int) {
-        val user = appDao.getUserById(userId) ?: return
-        val oldPenalty = user.penaltyPoints
-        val diff = penaltyPoints - oldPenalty
-        val newTotal = (user.totalPoints - diff).coerceAtLeast(0)
-        val updatedUser = user.copy(
-            penaltyPoints = penaltyPoints,
-            totalPoints = newTotal
-        )
-        appDao.updateUser(updatedUser)
-    }
-
-    suspend fun recalculateAndSaveAllUsersBonusPoints(settings: AppSettings) {
-        val users = appDao.getLeaderboard().first()
-        for (user in users) {
-            var champPts = 0
-            if (user.championSubmitted) {
-                if (settings.actualChampion != null) {
-                    champPts = when {
-                        user.championFirstChoice?.trim()?.equals(settings.actualChampion.trim(), ignoreCase = true) == true -> {
-                            settings.championFirstPoints
-                        }
-                        user.championSecondChoice?.trim()?.equals(settings.actualChampion.trim(), ignoreCase = true) == true -> {
-                            settings.championSecondPoints
-                        }
-                        else -> {
-                            settings.championWrongPoints
-                        }
-                    }
-                }
+        for (u in users) {
+            var bonus = 0
+            if (!settings.actualChampion.isNull_or_Empty() && u.predictedChampion.equals(settings.actualChampion, ignoreCase = true)) {
+                bonus += 10
+            }
+            if (!settings.actualTopScorer.isNull_or_Empty() && u.predictedTopScorer.equals(settings.actualTopScorer, ignoreCase = true)) {
+                bonus += 10
             }
 
-            var topScorerPts = 0
-            if (user.topScorerSubmitted) {
-                if (settings.actualTopScorer != null && user.topScorerChoice != null) {
-                    if (user.topScorerChoice.trim().equals(settings.actualTopScorer.trim(), ignoreCase = true)) {
-                        topScorerPts = settings.topScorerPoints
-                    }
-                }
-            }
-
-            val oldBonus = user.championPointsEarned + user.topScorerPointsEarned
-            val newBonus = champPts + topScorerPts
-            val bonusDiff = newBonus - oldBonus
-
-            if (bonusDiff != 0 || user.championPointsEarned != champPts || user.topScorerPointsEarned != topScorerPts) {
-                val updatedUser = user.copy(
-                    championPointsEarned = champPts,
-                    topScorerPointsEarned = topScorerPts,
-                    totalPoints = (user.totalPoints + bonusDiff).coerceAtLeast(0)
-                )
-                appDao.updateUser(updatedUser)
-            }
+            val updatedUser = u.copy(bonusPoints = bonus)
+            appDao.updateUser(updatedUser)
+            recalculateSingleUserTotalPoints(u.id)
         }
     }
 
-    fun getPredictionsForUser(userId: Int): Flow<List<UserPredictionWithMatch>> {
-        return appDao.getPredictionsForUser(userId)
-    }
+    private fun String?.isNull_or_Empty(): Boolean = this == null || this.trim().isEmpty()
 
-    suspend fun getPredictionsForMatch(matchId: Int): List<MatchPredictionWithUser> {
-        return appDao.getPredictionsForMatch(matchId)
-    }
+    // --- PREDICTIONS & SCORING ENGINE ---
 
-    suspend fun getPredictionByUserAndMatch(userId: Int, matchId: Int): Prediction? {
-        return appDao.getPredictionByUserAndMatch(userId, matchId)
-    }
+    fun getPredictionsByUserId(userId: Long): Flow<List<Prediction>> = appDao.getPredictionsByUserId(userId)
 
-    suspend fun submitPrediction(userId: Int, matchId: Int, homeScore: Int, awayScore: Int): Prediction {
-        val existing = appDao.getPredictionByUserAndMatch(userId, matchId)
-        val prediction = if (existing != null) {
-            existing.copy(predictedHomeScore = homeScore, predictedAwayScore = awayScore)
-        } else {
-            Prediction(userId = userId, matchId = matchId, predictedHomeScore = homeScore, predictedAwayScore = awayScore)
-        }
-        
-        val id = if (prediction.id == 0) {
-            appDao.insertPrediction(prediction).toInt()
-        } else {
-            appDao.updatePrediction(prediction)
-            prediction.id
-        }
-        return prediction.copy(id = id)
-    }
+    fun getAllPredictionsList(): Flow<List<Prediction>> = appDao.getAllPredictions()
 
-    // Scoring & Point Award Logic based on the 4 Custom Scores of the Match
     suspend fun saveMatchResultsAndCustomPoints(
-        matchId: Int,
-        actualHomeScore: Int,
-        actualAwayScore: Int,
-        customPointsMap: Map<Int, Int> // Prediction ID -> Manual Override Points
+        matchId: Long,
+        homeScore: Int,
+        awayScore: Int,
+        overrideMap: Map<Long, Int>? = null
     ) {
         val match = appDao.getMatchById(matchId) ?: return
         val updatedMatch = match.copy(
-            homeScore = actualHomeScore,
-            awayScore = actualAwayScore,
+            homeScore = homeScore,
+            awayScore = awayScore,
             isFinished = true
         )
         appDao.updateMatch(updatedMatch)
 
-        val predictionsWithUser = appDao.getPredictionsForMatch(matchId)
-        for (predUser in predictionsWithUser) {
-            val pred = predUser.prediction
-            val user = predUser.user
-            
-            // Get custom points entered by admin, or calculate automatically based on the 4 rules
-            val finalPoints = customPointsMap[pred.id] ?: calculatePoints(
-                actualHome = actualHomeScore,
-                actualAway = actualAwayScore,
-                predHome = pred.predictedHomeScore,
-                predAway = pred.predictedAwayScore,
-                pointsExact = match.pointsExactScore,
+        val predictions = appDao.getPredictionsForMatchDirect(matchId)
+        for (pred in predictions) {
+            val calcScore = calculatePoints(
+                actualHome = homeScore,
+                actualAway = awayScore,
+                predictedHome = pred.predictedHomeScore,
+                predictedAway = pred.predictedAwayScore,
+                pointsExact = match.pointsExact,
                 pointsWinnerAndGd = match.pointsWinnerAndGd,
                 pointsWinnerOnly = match.pointsWinnerOnly,
                 pointsWrong = match.pointsWrong
             )
 
-            val oldPoints = if (pred.isScored) pred.pointsEarned ?: 0 else 0
-            val pointDiff = finalPoints - oldPoints
+            val finalAwardedPoints = overrideMap?.get(pred.userId) ?: calcScore
 
-            // Update user's aggregate points
-            val updatedUser = user.copy(totalPoints = (user.totalPoints + pointDiff).coerceAtLeast(0))
-            appDao.updateUser(updatedUser)
-
-            // Update prediction
             val updatedPred = pred.copy(
-                pointsEarned = finalPoints,
-                isScored = true
+                pointsEarned = finalAwardedPoints,
+                isCalculated = true
             )
-            appDao.updatePrediction(updatedPred)
+            appDao.insertPrediction(updatedPred)
         }
+
+        recalculateAllUsersTotalPoints()
     }
 
-    fun calculatePoints(
+    suspend fun submitPrediction(prediction: Prediction) {
+        val match = appDao.getMatchById(prediction.matchId)
+        if (match != null && match.isFinished) {
+            return
+        }
+        appDao.insertPrediction(prediction)
+    }
+
+    private fun calculatePoints(
         actualHome: Int, actualAway: Int,
-        predHome: Int, predAway: Int,
-        pointsExact: Int, pointsWinnerAndGd: Int,
-        pointsWinnerOnly: Int, pointsWrong: Int
+        predictedHome: Int, predictedAway: Int,
+        pointsExact: Int, pointsWinnerAndGd: Int, pointsWinnerOnly: Int, pointsWrong: Int
     ): Int {
-        // 1. Exact score match
-        if (actualHome == predHome && actualAway == predAway) {
+        if (actualHome == predictedHome && actualAway == predictedAway) {
             return pointsExact
         }
 
-        val actualOutcome = actualHome.compareTo(actualAway)
-        val predOutcome = predHome.compareTo(predAway)
-
-        // 2. Correct outcome winner (or draw)
-        if (actualOutcome == predOutcome) {
-            val actualGd = Math.abs(actualHome - actualAway)
-            val predGd = Math.abs(predHome - predAway)
-            return if (actualGd == predGd) {
-                pointsWinnerAndGd // Winner and same goal difference
-            } else {
-                pointsWinnerOnly // Winner only
-            }
+        val actualWinner = when {
+            actualHome > actualAway -> 1
+            actualAway > actualHome -> 2
+            else -> 0
         }
 
-        // 3. Wrong prediction
+        val predictedWinner = when {
+            predictedHome > predictedAway -> 1
+            predictedAway > predictedHome -> 2
+            else -> 0
+        }
+
+        if (actualWinner == predictedWinner) {
+            val actualGd = actualHome - actualAway
+            val predictedGd = predictedHome - predictedAway
+            if (actualGd == predictedGd) {
+                return pointsWinnerAndGd
+            }
+            return pointsWinnerOnly
+        }
+
         return pointsWrong
     }
 
-    // Seed Demo Data
-    suspend fun seedDemoData() {
-        appDao.clearUsers()
-        appDao.clearMatches()
-        appDao.clearPredictions()
-        appDao.clearAnnouncements()
-
-        // Create Super Admin SCHOLES account
-        val scholes = User(username = "SCHOLES", displayName = "SCHOLES", password = "11971197", isAdmin = true, totalPoints = 0, isActive = true)
-        appDao.insertUser(scholes)
+    suspend fun recalculateAllUsersTotalPoints() {
+        val users = appDao.getAllUsersDirect()
+        for (user in users) {
+            recalculateSingleUserTotalPoints(user.id)
+        }
     }
 
-    // Bonus Prediction Items & Eliminated Items
-    val allBonusItems: Flow<List<BonusPredictionItem>> = appDao.getAllBonusItemsFlow()
-    val allUserBonusPredictions: Flow<List<UserBonusPrediction>> = appDao.getAllUserBonusPredictionsFlow()
-    val allEliminatedItems: Flow<List<EliminatedItem>> = appDao.getAllEliminatedItemsFlow()
+    private suspend fun recalculateSingleUserTotalPoints(userId: Long) {
+        val user = appDao.getUserByIdDirect(userId) ?: return
+        val matchPointsSum = appDao.getUserTotalMatchPointsDirect(userId) ?: 0
+        val bonusPredictionsSum = appDao.getUserTotalBonusPredictionsPointsDirect(userId) ?: 0
 
-    suspend fun addBonusItem(title: String, points: Int): BonusPredictionItem? {
-        if (title.isBlank() || points <= 0) return null
-        val item = BonusPredictionItem(title = title.trim(), points = points)
-        val id = appDao.insertBonusItem(item)
-        return item.copy(id = id.toInt())
+        val newTotal = matchPointsSum + user.bonusPoints + user.customBonusPoints + bonusPredictionsSum
+        appDao.updateUser(user.copy(totalPoints = newTotal))
     }
 
-    suspend fun updateBonusItem(item: BonusPredictionItem) {
+    // --- BONUS ITEMS & ELIMINATED TEAMS ---
+
+    fun getAllBonusItems(): Flow<List<BonusItem>> = appDao.getAllBonusItems()
+
+    suspend fun createBonusItem(item: BonusItem) {
+        appDao.insertBonusItem(item)
+    }
+
+    suspend fun updateBonusItem(item: BonusItem) {
         appDao.updateBonusItem(item)
     }
 
-    suspend fun deleteBonusItem(item: BonusPredictionItem) {
-        appDao.deleteUserBonusPredictionsForItem(item.id)
-        appDao.deleteBonusItem(item)
+    suspend fun deleteBonusItem(itemId: Long) {
+        appDao.deleteBonusItemById(itemId)
+        appDao.deleteBonusPredictionsByItemId(itemId)
     }
 
-    suspend fun submitUserBonusPredictions(userId: Int, predictions: Map<Int, String>) {
-        predictions.forEach { (bonusItemId, text) ->
-            if (text.isNotBlank()) {
-                val existing = appDao.getUserBonusPrediction(userId, bonusItemId)
-                val entry = UserBonusPrediction(
-                    userId = userId,
-                    bonusItemId = bonusItemId,
-                    predictionText = text.trim(),
-                    isSubmitted = true,
-                    pointsEarned = existing?.pointsEarned ?: 0
-                )
-                appDao.insertUserBonusPrediction(entry)
-            }
+    fun getBonusPredictionsByUser(userId: Long): Flow<List<BonusPrediction>> = appDao.getBonusPredictionsByUser(userId)
+
+    suspend fun submitBonusPrediction(userId: Long, itemId: Long, predictedAnswer: String) {
+        val bp = BonusPrediction(
+            userId = userId,
+            bonusItemId = itemId,
+            predictedAnswer = predictedAnswer
+        )
+        appDao.insertBonusPrediction(bp)
+    }
+
+    suspend fun evaluateBonusItemWinner(itemId: Long, correctAnswer: String) {
+        val item = appDao.getBonusItemById(itemId) ?: return
+        val updatedItem = item.copy(correctAnswer = correctAnswer, isEvaluated = true)
+        appDao.updateBonusItem(updatedItem)
+
+        val predictions = appDao.getBonusPredictionsByItemIdDirect(itemId)
+        for (p in predictions) {
+            val isCorrect = p.predictedAnswer.equals(correctAnswer, ignoreCase = true)
+            val points = if (isCorrect) item.pointsAwarded else 0
+            val updatedP = p.copy(pointsEarned = points, isEvaluated = true)
+            appDao.insertBonusPrediction(updatedP)
         }
+
+        recalculateAllUsersTotalPoints()
     }
 
-    suspend fun evaluateBonusItemWinner(bonusItemId: Int, actualWinner: String): String {
-        val bonusItem = appDao.getBonusItemById(bonusItemId) ?: return "امتیاز تشویقی پیدا نشد."
-        val cleanedWinner = actualWinner.trim()
-        if (cleanedWinner.isBlank()) return "لطفاً نام برنده واقعی را وارد کنید."
+    fun getAllEliminatedItems(): Flow<List<EliminatedItem>> = appDao.getAllEliminatedItems()
 
-        appDao.updateBonusItem(bonusItem.copy(actualWinner = cleanedWinner, isEvaluated = true))
+    suspend fun addEliminatedItem(name: String, type: String) {
+        val item = EliminatedItem(name = name, type = type)
+        appDao.insertEliminatedItem(item)
+    }
 
-        val allUserPreds = appDao.getAllUserBonusPredictions().filter { it.bonusItemId == bonusItemId }
-        var winnersCount = 0
+    suspend fun deleteEliminatedItem(itemId: Long) {
+        appDao.deleteEliminatedItemById(itemId)
+    }
 
-        for (userPred in allUserPreds) {
-            val isCorrect = userPred.predictionText.trim().equals(cleanedWinner, ignoreCase = true)
-            val newPointsEarned = if (isCorrect) bonusItem.points else 0
-            val pointDiff = newPointsEarned - userPred.pointsEarned
+    // --- RESET & MAINTENANCE ---
 
-            if (pointDiff != 0) {
-                val user = appDao.getUserById(userPred.userId)
-                if (user != null) {
-                    val updatedTotalPoints = (user.totalPoints + pointDiff).coerceAtLeast(0)
-                    appDao.updateUser(user.copy(totalPoints = updatedTotalPoints))
-                }
-            }
-
-            appDao.insertUserBonusPrediction(
-                userPred.copy(pointsEarned = newPointsEarned)
+    suspend fun seedDemoData() {
+        val users = appDao.getAllUsersDirect()
+        if (users.isEmpty()) {
+            val adminUser = User(
+                username = "SCHOLES",
+                isAdmin = true,
+                totalPoints = 0
             )
-            if (isCorrect) winnersCount++
+            appDao.insertUser(adminUser)
         }
-
-        return "برنده واقعی ($cleanedWinner) ثبت شد. به $winnersCount کاربر امتیاز اعطا گردید."
-    }
-
-    suspend fun addEliminatedItem(name: String): EliminatedItem? {
-        val cleaned = name.trim()
-        if (cleaned.isBlank()) return null
-        val item = EliminatedItem(name = cleaned)
-        val id = appDao.insertEliminatedItem(item)
-        return item.copy(id = id.toInt())
-    }
-
-    suspend fun deleteEliminatedItem(item: EliminatedItem) {
-        appDao.deleteEliminatedItem(item)
-    }
-
-    suspend fun updateUserBonusPredictionText(userId: Int, bonusItemId: Int, newText: String) {
-        val cleaned = newText.trim()
-        val existing = appDao.getUserBonusPrediction(userId, bonusItemId)
-        if (existing != null) {
-            val updated = existing.copy(predictionText = cleaned)
-            appDao.insertUserBonusPrediction(updated)
-        } else if (cleaned.isNotEmpty()) {
-            val created = UserBonusPrediction(
-                userId = userId,
-                bonusItemId = bonusItemId,
-                predictionText = cleaned,
-                isSubmitted = true
-            )
-            appDao.insertUserBonusPrediction(created)
-        }
-
-        // If bonus item was already evaluated, re-evaluate to update point awards accordingly
-        val item = appDao.getBonusItemById(bonusItemId)
-        if (item != null && item.isEvaluated && !item.actualWinner.isNullOrBlank()) {
-            evaluateBonusItemWinner(bonusItemId, item.actualWinner)
-        }
-    }
-
-    suspend fun toggleBonusItemPublished(bonusItemId: Int, isPublished: Boolean) {
-        val item = appDao.getBonusItemById(bonusItemId) ?: return
-        appDao.updateBonusItem(item.copy(isPublished = isPublished))
-    }
-
-    suspend fun updateBannerImageUrl(bannerUrl: String?) {
-        val settings = getAppSettingsDirect()
-        appDao.insertSettings(settings.copy(bannerImageUrl = bannerUrl?.trim()))
     }
 
     suspend fun resetTournamentSeasonKeepUsers() {
-        appDao.clearPredictions()
-        appDao.clearStageSubmissions()
-        appDao.deleteAllUserBonusPredictions()
-        appDao.deleteAllBonusItems()
-        appDao.deleteAllEliminatedItems()
+        appDao.clearAllMatches()
+        appDao.clearAllPredictions()
+        appDao.clearAllBonusItems()
+        appDao.clearAllBonusPredictions()
+        appDao.clearAllEliminatedItems()
         appDao.clearAnnouncements()
-        appDao.clearMatches()
 
         val users = appDao.getAllUsersDirect()
         for (u in users) {
-            appDao.updateUser(
-                u.copy(
-                    totalPoints = 0,
-                    penaltyPoints = 0,
-                    championFirstChoice = null,
-                    championSecondChoice = null,
-                    championSubmitted = false,
-                    topScorerChoice = null,
-                    topScorerSubmitted = false,
-                    championPointsEarned = 0,
-                    topScorerPointsEarned = 0
-                )
+            val resetUser = u.copy(
+                totalPoints = 0,
+                bonusPoints = 0,
+                customBonusPoints = 0,
+                predictedChampion = null,
+                predictedTopScorer = null
             )
+            appDao.updateUser(resetUser)
         }
-
-        appDao.insertSettings(AppSettings())
     }
 
-    // -------------------------------------------------------------
-    // Remote Server Synchronization (https://footballfun.ir)
-    // -------------------------------------------------------------
+    // --- REMOTE SYNCHRONIZATION (FIXED FOR VIEWMODEL) ---
 
-    suspend fun syncMatchesFromRemote(stage: String? = null): Boolean {
+    suspend fun syncMatchesFromRemote(): Boolean {
         return try {
-            val response = ApiClient.apiService.getMatches(stage)
+            val response = ApiClient.apiService.getMatches()
             if (response.isSuccessful && response.body() != null) {
                 val remoteMatches = response.body()!!
-                for (dto in remoteMatches) {
-                    val existing = appDao.getMatchById(dto.id)
-                    val entity = MatchEntity(
-                        id = dto.id,
-                        homeTeam = dto.homeTeam,
-                        awayTeam = dto.awayTeam,
-                        matchTime = dto.matchTime,
-                        stageName = dto.stageName,
-                        homeScore = dto.homeScore,
-                        awayScore = dto.awayScore,
-                        isFinished = dto.isFinished,
-                        pointsExactScore = dto.pointsExactScore,
-                        pointsWinnerAndGd = dto.pointsWinnerAndGd,
-                        pointsWinnerOnly = dto.pointsWinnerOnly,
-                        pointsWrong = dto.pointsWrong,
-                        isPublished = true
-                    )
-                    if (existing != null) {
-                        appDao.updateMatch(entity)
-                    } else {
-                        appDao.insertMatch(entity)
-                    }
-                }
+                appDao.insertMatches(remoteMatches)
                 true
             } else {
                 false
@@ -543,34 +356,34 @@ class FootballPredictorRepository(private val appDao: AppDao) {
         }
     }
 
-    suspend fun submitPredictionsToRemote(userId: Int, items: List<PredictionSubmissionItem>): Boolean {
+    suspend fun submitPredictionsToRemote(userId: Long): Boolean {
         return try {
-            val request = SubmitPredictionsRequest(userId = userId, predictions = items)
-            val response = ApiClient.apiService.submitPredictions(request)
-            response.isSuccessful && response.body()?.success == true
+            val predictions = appDao.getPredictionsByUserIdDirect(userId)
+            val response = ApiClient.apiService.postPredictions(predictions)
+            response.isSuccessful
         } catch (e: Exception) {
             e.printStackTrace()
             false
         }
     }
 
-    suspend fun loginRemote(username: String, password: String): LoginResponse? {
+    suspend fun loginRemote(username: String, pass: String): Boolean {
         return try {
-            val response = ApiClient.apiService.login(LoginRequest(username = username, password = password))
-            if (response.isSuccessful) response.body() else null
+            val response = ApiClient.apiService.login(username, pass)
+            response.isSuccessful
         } catch (e: Exception) {
             e.printStackTrace()
-            null
+            false
         }
     }
 
-    suspend fun registerRemote(username: String, displayName: String, password: String): LoginResponse? {
+    suspend fun registerRemote(username: String, pass: String): Boolean {
         return try {
-            val response = ApiClient.apiService.register(RegisterRequest(username = username, displayName = displayName, password = password))
-            if (response.isSuccessful) response.body() else null
+            val response = ApiClient.apiService.register(username, pass)
+            response.isSuccessful
         } catch (e: Exception) {
             e.printStackTrace()
-            null
+            false
         }
     }
 }
