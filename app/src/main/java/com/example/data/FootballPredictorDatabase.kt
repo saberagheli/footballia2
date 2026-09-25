@@ -5,12 +5,14 @@ import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "users", indices = [Index(value = ["username"], unique = true)])
 data class User(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val username: String,
-    val displayName: String,
+    val displayName: String = "",
     val password: String = "123456",
     val isActive: Boolean = true,
     val totalPoints: Int = 0,
+    val bonusPoints: Int = 0,
+    val customBonusPoints: Int = 0,
     val isAdmin: Boolean = false,
     val championFirstChoice: String? = null,
     val championSecondChoice: String? = null,
@@ -19,34 +21,40 @@ data class User(
     val topScorerSubmitted: Boolean = false,
     val championPointsEarned: Int = 0,
     val topScorerPointsEarned: Int = 0,
-    val penaltyPoints: Int = 0
+    val penaltyPoints: Int = 0,
+    val predictedChampion: String? = null,
+    val predictedTopScorer: String? = null
 )
 
 @Entity(tableName = "matches", indices = [Index(value = ["stageName"])])
 data class MatchEntity(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val homeTeam: String,
     val awayTeam: String,
-    val matchTime: String, // e.g., "Tonight, 21:00" or "Sunday, 18:30"
+    val matchTime: String,
     val homeScore: Int? = null,
     val awayScore: Int? = null,
     val isFinished: Boolean = false,
-    val isPublished: Boolean = false, // If false, only visible to Admin. If true, visible to everyone.
-    val stageName: String = "مرحله اول گروهی", // One of the 9 stages
+    val isPublished: Boolean = false,
+    val stageName: String = "مرحله اول گروهی",
     val pointsExactScore: Int = 5,
     val pointsWinnerAndGd: Int = 3,
     val pointsWinnerOnly: Int = 2,
-    val pointsWrong: Int = 0
+    val pointsWrong: Int = 0,
+    val pointsExact: Int = 5
 )
+
+typealias Match = MatchEntity
 
 @Entity(tableName = "announcements")
 data class Announcement(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String,
     val message: String,
-    val timestamp: String,
+    val timestamp: String = "",
+    val createdAt: String = "",
     val isRead: Boolean = false,
-    val targetUserIds: String? = null // null or "ALL" for all users, or comma-separated user IDs e.g. "1,3"
+    val targetUserIds: String? = null
 )
 
 @Entity(
@@ -71,13 +79,14 @@ data class Announcement(
     ]
 )
 data class Prediction(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val userId: Int,
-    val matchId: Int,
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val userId: Long,
+    val matchId: Long,
     val predictedHomeScore: Int,
     val predictedAwayScore: Int,
     val pointsEarned: Int? = null,
-    val isScored: Boolean = false
+    val isScored: Boolean = false,
+    val isCalculated: Boolean = false
 )
 
 data class UserPredictionWithMatch(
@@ -98,20 +107,83 @@ data class MatchPredictionWithUser(
     val user: User
 )
 
+@Entity(tableName = "app_settings")
+data class AppSettings(
+    @PrimaryKey val id: Int = 1,
+    val championFirstPoints: Int = 30,
+    val championSecondPoints: Int = 15,
+    val championWrongPoints: Int = -5,
+    val topScorerPoints: Int = 30,
+    val actualChampion: String? = null,
+    val actualTopScorer: String? = null,
+    val publishedPredictionStages: String = "",
+    val bannerImageUrl: String? = null
+)
+
+@Entity(tableName = "stage_submissions", primaryKeys = ["userId", "stageName"])
+data class StageSubmission(
+    val userId: Long,
+    val stageName: String,
+    val isSubmitted: Boolean = false
+)
+
+@Entity(tableName = "bonus_items")
+data class BonusPredictionItem(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    val points: Int = 0,
+    val pointsAwarded: Int = 0,
+    val actualWinner: String? = null,
+    val correctAnswer: String? = null,
+    val isEvaluated: Boolean = false,
+    val isPublished: Boolean = false
+)
+
+typealias BonusItem = BonusPredictionItem
+
+@Entity(
+    tableName = "user_bonus_predictions",
+    primaryKeys = ["userId", "bonusItemId"]
+)
+data class UserBonusPrediction(
+    val userId: Long,
+    val bonusItemId: Long,
+    val predictionText: String = "",
+    val predictedAnswer: String = "",
+    val isSubmitted: Boolean = false,
+    val isEvaluated: Boolean = false,
+    val pointsEarned: Int = 0
+)
+
+typealias BonusPrediction = UserBonusPrediction
+
+@Entity(tableName = "eliminated_items")
+data class EliminatedItem(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val type: String = ""
+)
+
 @Dao
 interface AppDao {
-    // Users
+    // --- Users ---
     @Query("SELECT * FROM users ORDER BY totalPoints DESC, displayName ASC")
     fun getLeaderboard(): Flow<List<User>>
+
+    @Query("SELECT * FROM users")
+    fun getAllUsers(): Flow<List<User>>
 
     @Query("SELECT * FROM users WHERE username = :username COLLATE NOCASE LIMIT 1")
     suspend fun getUserByUsername(username: String): User?
 
     @Query("SELECT * FROM users WHERE id = :userId LIMIT 1")
-    suspend fun getUserById(userId: Int): User?
+    suspend fun getUserById(userId: Long): User?
+
+    @Query("SELECT * FROM users WHERE id = :userId LIMIT 1")
+    suspend fun getUserByIdDirect(userId: Long): User?
 
     @Query("SELECT * FROM users WHERE id = :userId")
-    fun getUserByIdFlow(userId: Int): Flow<User?>
+    fun getUserByIdFlow(userId: Long): Flow<User?>
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertUser(user: User): Long
@@ -122,16 +194,28 @@ interface AppDao {
     @Delete
     suspend fun deleteUser(user: User)
 
+    @Query("DELETE FROM users WHERE id = :userId")
+    suspend fun deleteUserById(userId: Long)
+
+    @Query("UPDATE users SET isActive = :isActive WHERE id = :userId")
+    suspend fun updateUserActiveStatus(userId: Long, isActive: Boolean)
+
+    @Query("UPDATE users SET isAdmin = :isAdmin WHERE id = :userId")
+    suspend fun updateUserAdminStatus(userId: Long, isAdmin: Boolean)
+
     @Query("DELETE FROM predictions WHERE userId = :userId")
-    suspend fun deletePredictionsForUser(userId: Int)
+    suspend fun deletePredictionsByUserId(userId: Long)
 
     @Query("DELETE FROM user_bonus_predictions WHERE userId = :userId")
-    suspend fun deleteUserBonusPredictionsForUser(userId: Int)
+    suspend fun deleteBonusPredictionsByUserId(userId: Long)
 
     @Query("DELETE FROM stage_submissions WHERE userId = :userId")
-    suspend fun deleteStageSubmissionsForUser(userId: Int)
+    suspend fun deleteStageSubmissionsForUser(userId: Long)
 
-    // Matches
+    @Query("SELECT * FROM users")
+    suspend fun getAllUsersDirect(): List<User>
+
+    // --- Matches ---
     @Query("SELECT * FROM matches ORDER BY isFinished ASC, id DESC")
     fun getAllMatches(): Flow<List<MatchEntity>>
 
@@ -139,10 +223,13 @@ interface AppDao {
     fun getMatchesByStage(stageName: String): Flow<List<MatchEntity>>
 
     @Query("SELECT * FROM matches WHERE id = :matchId LIMIT 1")
-    suspend fun getMatchById(matchId: Int): MatchEntity?
+    suspend fun getMatchById(matchId: Long): MatchEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMatch(match: MatchEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMatches(matches: List<MatchEntity>)
 
     @Update
     suspend fun updateMatch(match: MatchEntity)
@@ -150,9 +237,24 @@ interface AppDao {
     @Delete
     suspend fun deleteMatch(match: MatchEntity)
 
-    // Predictions
+    @Query("DELETE FROM matches WHERE id = :matchId")
+    suspend fun deleteMatchById(matchId: Long)
+
+    @Query("DELETE FROM predictions WHERE matchId = :matchId")
+    suspend fun deletePredictionsByMatchId(matchId: Long)
+
+    @Query("DELETE FROM matches")
+    suspend fun clearAllMatches()
+
+    // --- Predictions ---
     @Query("SELECT * FROM predictions")
-    fun getAllPredictionsFlow(): Flow<List<Prediction>>
+    fun getAllPredictions(): Flow<List<Prediction>>
+
+    @Query("SELECT * FROM predictions WHERE userId = :userId")
+    fun getPredictionsByUserId(userId: Long): Flow<List<Prediction>>
+
+    @Query("SELECT * FROM predictions WHERE userId = :userId")
+    suspend fun getPredictionsByUserIdDirect(userId: Long): List<Prediction>
 
     @Transaction
     @Query("SELECT * FROM predictions WHERE userId = :userId")
@@ -160,10 +262,13 @@ interface AppDao {
 
     @Transaction
     @Query("SELECT * FROM predictions WHERE matchId = :matchId")
-    suspend fun getPredictionsForMatch(matchId: Int): List<MatchPredictionWithUser>
+    suspend fun getPredictionsForMatch(matchId: Long): List<MatchPredictionWithUser>
+
+    @Query("SELECT * FROM predictions WHERE matchId = :matchId")
+    suspend fun getPredictionsForMatchDirect(matchId: Long): List<Prediction>
 
     @Query("SELECT * FROM predictions WHERE userId = :userId AND matchId = :matchId LIMIT 1")
-    suspend fun getPredictionByUserAndMatch(userId: Int, matchId: Int): Prediction?
+    suspend fun getPredictionByUserAndMatch(userId: Long, matchId: Long): Prediction?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPrediction(prediction: Prediction): Long
@@ -171,7 +276,16 @@ interface AppDao {
     @Update
     suspend fun updatePrediction(prediction: Prediction)
 
-    // Announcements / System Notifications
+    @Query("SELECT SUM(pointsEarned) FROM predictions WHERE userId = :userId")
+    suspend fun getUserTotalMatchPointsDirect(userId: Long): Int?
+
+    @Query("SELECT SUM(pointsEarned) FROM user_bonus_predictions WHERE userId = :userId")
+    suspend fun getUserTotalBonusPredictionsPointsDirect(userId: Long): Int?
+
+    @Query("DELETE FROM predictions")
+    suspend fun clearAllPredictions()
+
+    // --- Announcements ---
     @Query("SELECT * FROM announcements ORDER BY id DESC")
     fun getAllAnnouncements(): Flow<List<Announcement>>
 
@@ -181,32 +295,22 @@ interface AppDao {
     @Query("DELETE FROM announcements")
     suspend fun clearAnnouncements()
 
-    // Reset/Setup helper
-    @Query("DELETE FROM users")
-    suspend fun clearUsers()
-
-    @Query("DELETE FROM matches")
-    suspend fun clearMatches()
-
-    @Query("DELETE FROM predictions")
-    suspend fun clearPredictions()
-
-    // Settings
+    // --- Settings ---
     @Query("SELECT * FROM app_settings WHERE id = 1 LIMIT 1")
-    fun getSettingsFlow(): Flow<AppSettings?>
+    fun getAppSettings(): Flow<AppSettings?>
 
     @Query("SELECT * FROM app_settings WHERE id = 1 LIMIT 1")
-    suspend fun getSettingsDirect(): AppSettings?
+    suspend fun getAppSettingsDirect(): AppSettings?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertSettings(settings: AppSettings)
+    suspend fun insertAppSettings(settings: AppSettings)
 
-    // Stage Submissions
+    // --- Stage Submissions ---
     @Query("SELECT * FROM stage_submissions")
     fun getAllStageSubmissionsFlow(): Flow<List<StageSubmission>>
 
     @Query("SELECT * FROM stage_submissions WHERE userId = :userId AND stageName = :stageName LIMIT 1")
-    suspend fun getStageSubmission(userId: Int, stageName: String): StageSubmission?
+    suspend fun getStageSubmission(userId: Long, stageName: String): StageSubmission?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStageSubmission(submission: StageSubmission)
@@ -214,15 +318,12 @@ interface AppDao {
     @Query("DELETE FROM stage_submissions")
     suspend fun clearStageSubmissions()
 
-    // Bonus Prediction Items
+    // --- Bonus Items ---
     @Query("SELECT * FROM bonus_items ORDER BY id ASC")
-    fun getAllBonusItemsFlow(): Flow<List<BonusPredictionItem>>
-
-    @Query("SELECT * FROM bonus_items ORDER BY id ASC")
-    suspend fun getAllBonusItems(): List<BonusPredictionItem>
+    fun getAllBonusItems(): Flow<List<BonusPredictionItem>>
 
     @Query("SELECT * FROM bonus_items WHERE id = :id LIMIT 1")
-    suspend fun getBonusItemById(id: Int): BonusPredictionItem?
+    suspend fun getBonusItemById(id: Long): BonusPredictionItem?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBonusItem(item: BonusPredictionItem): Long
@@ -230,105 +331,41 @@ interface AppDao {
     @Update
     suspend fun updateBonusItem(item: BonusPredictionItem)
 
-    @Delete
-    suspend fun deleteBonusItem(item: BonusPredictionItem)
+    @Query("DELETE FROM bonus_items WHERE id = :id")
+    suspend fun deleteBonusItemById(id: Long)
 
-    // User Bonus Predictions
-    @Query("SELECT * FROM user_bonus_predictions")
-    fun getAllUserBonusPredictionsFlow(): Flow<List<UserBonusPrediction>>
+    @Query("DELETE FROM bonus_items")
+    suspend fun clearAllBonusItems()
 
-    @Query("SELECT * FROM user_bonus_predictions")
-    suspend fun getAllUserBonusPredictions(): List<UserBonusPrediction>
-
+    // --- User Bonus Predictions ---
     @Query("SELECT * FROM user_bonus_predictions WHERE userId = :userId")
-    fun getUserBonusPredictionsFlow(userId: Int): Flow<List<UserBonusPrediction>>
+    fun getBonusPredictionsByUser(userId: Long): Flow<List<UserBonusPrediction>>
 
-    @Query("SELECT * FROM user_bonus_predictions WHERE userId = :userId")
-    suspend fun getUserBonusPredictions(userId: Int): List<UserBonusPrediction>
-
-    @Query("SELECT * FROM user_bonus_predictions WHERE userId = :userId AND bonusItemId = :bonusItemId LIMIT 1")
-    suspend fun getUserBonusPrediction(userId: Int, bonusItemId: Int): UserBonusPrediction?
+    @Query("SELECT * FROM user_bonus_predictions WHERE bonusItemId = :itemId")
+    suspend fun getBonusPredictionsByItemIdDirect(itemId: Long): List<UserBonusPrediction>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertUserBonusPrediction(prediction: UserBonusPrediction): Long
+    suspend fun insertBonusPrediction(prediction: UserBonusPrediction): Long
 
-    @Query("DELETE FROM user_bonus_predictions WHERE bonusItemId = :bonusItemId")
-    suspend fun deleteUserBonusPredictionsForItem(bonusItemId: Int)
+    @Query("DELETE FROM user_bonus_predictions WHERE bonusItemId = :itemId")
+    suspend fun deleteBonusPredictionsByItemId(itemId: Long)
 
-    // Eliminated Items
+    @Query("DELETE FROM user_bonus_predictions")
+    suspend fun clearAllBonusPredictions()
+
+    // --- Eliminated Items ---
     @Query("SELECT * FROM eliminated_items ORDER BY id ASC")
-    fun getAllEliminatedItemsFlow(): Flow<List<EliminatedItem>>
-
-    @Query("SELECT * FROM eliminated_items ORDER BY id ASC")
-    suspend fun getAllEliminatedItems(): List<EliminatedItem>
+    fun getAllEliminatedItems(): Flow<List<EliminatedItem>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEliminatedItem(item: EliminatedItem): Long
 
-    @Delete
-    suspend fun deleteEliminatedItem(item: EliminatedItem)
-
-    // Clear queries for season reset
-    @Query("SELECT * FROM users")
-    suspend fun getAllUsersDirect(): List<User>
-
-    @Query("DELETE FROM bonus_items")
-    suspend fun deleteAllBonusItems()
-
-    @Query("DELETE FROM user_bonus_predictions")
-    suspend fun deleteAllUserBonusPredictions()
+    @Query("DELETE FROM eliminated_items WHERE id = :id")
+    suspend fun deleteEliminatedItemById(id: Long)
 
     @Query("DELETE FROM eliminated_items")
-    suspend fun deleteAllEliminatedItems()
+    suspend fun clearAllEliminatedItems()
 }
-
-@Entity(tableName = "app_settings")
-data class AppSettings(
-    @PrimaryKey val id: Int = 1,
-    val championFirstPoints: Int = 30,
-    val championSecondPoints: Int = 15,
-    val championWrongPoints: Int = -5,
-    val topScorerPoints: Int = 30,
-    val actualChampion: String? = null,
-    val actualTopScorer: String? = null,
-    val publishedPredictionStages: String = "", // Comma-separated list of stages whose predictions are public
-    val bannerImageUrl: String? = null
-)
-
-@Entity(tableName = "stage_submissions", primaryKeys = ["userId", "stageName"])
-data class StageSubmission(
-    val userId: Int,
-    val stageName: String,
-    val isSubmitted: Boolean = false
-)
-
-@Entity(tableName = "bonus_items")
-data class BonusPredictionItem(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val title: String,
-    val points: Int,
-    val actualWinner: String? = null,
-    val isEvaluated: Boolean = false,
-    val isPublished: Boolean = false // Controls whether bonus predictions for this item are published to leaderboard
-)
-
-@Entity(
-    tableName = "user_bonus_predictions",
-    primaryKeys = ["userId", "bonusItemId"]
-)
-data class UserBonusPrediction(
-    val userId: Int,
-    val bonusItemId: Int,
-    val predictionText: String,
-    val isSubmitted: Boolean = false,
-    val pointsEarned: Int = 0
-)
-
-@Entity(tableName = "eliminated_items")
-data class EliminatedItem(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val name: String
-)
 
 @Database(
     entities = [
@@ -342,7 +379,7 @@ data class EliminatedItem(
         UserBonusPrediction::class,
         EliminatedItem::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
