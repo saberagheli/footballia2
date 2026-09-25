@@ -1,5 +1,6 @@
 package com.example.data
 
+import com.example.network.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import java.text.SimpleDateFormat
@@ -352,87 +353,9 @@ class FootballPredictorRepository(private val appDao: AppDao) {
         appDao.clearPredictions()
         appDao.clearAnnouncements()
 
-        // 1. Create System Admin, Super Admin SCHOLES and Regular users
-        val admin = User(username = "admin", displayName = "مدیر سیستم (Admin)", password = "admin", isAdmin = true, totalPoints = 0, isActive = true)
+        // Create Super Admin SCHOLES account
         val scholes = User(username = "SCHOLES", displayName = "SCHOLES", password = "11971197", isAdmin = true, totalPoints = 0, isActive = true)
-        appDao.insertUser(admin)
         appDao.insertUser(scholes)
-
-        val u1 = User(username = "ali", displayName = "علی رضایی", password = "123", totalPoints = 25, isActive = true)
-        val u2 = User(username = "sara", displayName = "سارا احمدی", password = "123", totalPoints = 18, isActive = true)
-        val u3 = User(username = "reza", displayName = "رضا کریمی", password = "123", totalPoints = 12, isActive = true)
-        val u4 = User(username = "maryam", displayName = "مریم حسینی", password = "123", totalPoints = 6, isActive = false)
-        
-        val id1 = appDao.insertUser(u1).toInt()
-        val id2 = appDao.insertUser(u2).toInt()
-        val id3 = appDao.insertUser(u3).toInt()
-        val id4 = appDao.insertUser(u4).toInt()
-
-        // 3. Create some preloaded matches
-        // Match 1: Finished match in Stage 1
-        val m1 = MatchEntity(
-            homeTeam = "ایران",
-            awayTeam = "ژاپن",
-            matchTime = "دیروز ساعت ۱۸:۰۰",
-            homeScore = 2,
-            awayScore = 1,
-            isFinished = true,
-            isPublished = true,
-            stageName = "مرحله اول گروهی",
-            pointsExactScore = 10,
-            pointsWinnerAndGd = 7,
-            pointsWinnerOnly = 5,
-            pointsWrong = -2
-        )
-        val mid1 = appDao.insertMatch(m1).toInt()
-
-        // Match 2: Active (Published) match in Stage 1
-        val m2 = MatchEntity(
-            homeTeam = "رئال مادرید",
-            awayTeam = "بارسلونا",
-            matchTime = "امشب ساعت ۲۲:۳۰",
-            isPublished = true,
-            stageName = "مرحله اول گروهی",
-            pointsExactScore = 8,
-            pointsWinnerAndGd = 5,
-            pointsWinnerOnly = 3,
-            pointsWrong = -1
-        )
-        val mid2 = appDao.insertMatch(m2).toInt()
-
-        // Match 3: Draft (Unpublished) match in Stage 1 (only visible to admin)
-        val m3 = MatchEntity(
-            homeTeam = "منچستر سیتی",
-            awayTeam = "آرسنال",
-            matchTime = "فردا ساعت ۲۰:۰۰",
-            isPublished = false,
-            stageName = "مرحله اول گروهی",
-            pointsExactScore = 10,
-            pointsWinnerAndGd = 6,
-            pointsWinnerOnly = 4,
-            pointsWrong = 0
-        )
-        appDao.insertMatch(m3)
-
-        // 4. Add predictions for the Finished match
-        // Ali predicted 2-1 (Exact Score) -> 10 points
-        val p1Points = calculatePoints(2, 1, 2, 1, m1.pointsExactScore, m1.pointsWinnerAndGd, m1.pointsWinnerOnly, m1.pointsWrong)
-        val p1 = Prediction(userId = id1, matchId = mid1, predictedHomeScore = 2, predictedAwayScore = 1, pointsEarned = p1Points, isScored = true)
-        appDao.insertPrediction(p1)
-
-        // Sara predicted 1-0 (Winner and same GD of 1) -> 7 points
-        val p2Points = calculatePoints(2, 1, 1, 0, m1.pointsExactScore, m1.pointsWinnerAndGd, m1.pointsWinnerOnly, m1.pointsWrong)
-        val p2 = Prediction(userId = id2, matchId = mid1, predictedHomeScore = 1, predictedAwayScore = 0, pointsEarned = p2Points, isScored = true)
-        appDao.insertPrediction(p2)
-
-        // Reza predicted 1-2 (Wrong outcome) -> -2 points
-        val p3Points = calculatePoints(2, 1, 1, 2, m1.pointsExactScore, m1.pointsWinnerAndGd, m1.pointsWinnerOnly, m1.pointsWrong)
-        val p3 = Prediction(userId = id3, matchId = mid1, predictedHomeScore = 1, predictedAwayScore = 2, pointsEarned = p3Points, isScored = true)
-        appDao.insertPrediction(p3)
-
-        // Add pre-prediction for Active match
-        appDao.insertPrediction(Prediction(userId = id1, matchId = mid2, predictedHomeScore = 3, predictedAwayScore = 1))
-        appDao.insertPrediction(Prediction(userId = id2, matchId = mid2, predictedHomeScore = 2, predictedAwayScore = 2))
     }
 
     // Bonus Prediction Items & Eliminated Items
@@ -576,5 +499,78 @@ class FootballPredictorRepository(private val appDao: AppDao) {
         }
 
         appDao.insertSettings(AppSettings())
+    }
+
+    // -------------------------------------------------------------
+    // Remote Server Synchronization (https://footballfun.ir)
+    // -------------------------------------------------------------
+
+    suspend fun syncMatchesFromRemote(stage: String? = null): Boolean {
+        return try {
+            val response = ApiClient.apiService.getMatches(stage)
+            if (response.isSuccessful && response.body() != null) {
+                val remoteMatches = response.body()!!
+                for (dto in remoteMatches) {
+                    val existing = appDao.getMatchById(dto.id)
+                    val entity = MatchEntity(
+                        id = dto.id,
+                        homeTeam = dto.homeTeam,
+                        awayTeam = dto.awayTeam,
+                        matchTime = dto.matchTime,
+                        stageName = dto.stageName,
+                        homeScore = dto.homeScore,
+                        awayScore = dto.awayScore,
+                        isFinished = dto.isFinished,
+                        pointsExactScore = dto.pointsExactScore,
+                        pointsWinnerAndGd = dto.pointsWinnerAndGd,
+                        pointsWinnerOnly = dto.pointsWinnerOnly,
+                        pointsWrong = dto.pointsWrong,
+                        isPublished = true
+                    )
+                    if (existing != null) {
+                        appDao.updateMatch(entity)
+                    } else {
+                        appDao.insertMatch(entity)
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun submitPredictionsToRemote(userId: Int, items: List<PredictionSubmissionItem>): Boolean {
+        return try {
+            val request = SubmitPredictionsRequest(userId = userId, predictions = items)
+            val response = ApiClient.apiService.submitPredictions(request)
+            response.isSuccessful && response.body()?.success == true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun loginRemote(username: String, password: String): LoginResponse? {
+        return try {
+            val response = ApiClient.apiService.login(LoginRequest(username = username, password = password))
+            if (response.isSuccessful) response.body() else null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    suspend fun registerRemote(username: String, displayName: String, password: String): LoginResponse? {
+        return try {
+            val response = ApiClient.apiService.register(RegisterRequest(username = username, displayName = displayName, password = password))
+            if (response.isSuccessful) response.body() else null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
     }
 }
